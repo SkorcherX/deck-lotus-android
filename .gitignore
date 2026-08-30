@@ -1,0 +1,30 @@
+# Android / Gradle
+.gradle/
+build/
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+local.properties
+.cxx/
+release/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.hprof
+
+# Keystores / secrets — never commit
+*.jks
+*.keystore
+keystore.properties
+secrets.properties
+google-services.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (if any tooling scripts are added)
+node_modules/
