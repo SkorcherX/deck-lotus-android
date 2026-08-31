@@ -154,12 +154,21 @@ fun ScanResultBadge(
                         }
                     }
 
-                    // Market price
+                    // Market price (Color-coded by Price Band matching webscanner)
+                    val priceVal = response?.marketPriceUsd ?: printing?.marketPriceUsd ?: 0.0
+                    val priceColor = when {
+                        priceVal >= 20.0 -> Color(0xFFC084FC) // Purple ($20+)
+                        priceVal >= 10.0 -> Color(0xFF60A5FA) // Blue ($10+)
+                        priceVal >= 5.0 -> Color(0xFF4ADE80)  // Green ($5+)
+                        priceVal >= 1.0 -> Color(0xFFFBBF24)  // Yellow ($1+)
+                        else -> Color(0xFFCBD5E1)              // Grey/Silver (< $1)
+                    }
+
                     Text(
-                        text = String.format("$%.2f", response?.marketPriceUsd ?: printing?.marketPriceUsd ?: 0.0),
+                        text = String.format("$%.2f", priceVal),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF9ECE6A),
+                        color = priceColor,
                         fontFamily = FontFamily.Monospace
                     )
 

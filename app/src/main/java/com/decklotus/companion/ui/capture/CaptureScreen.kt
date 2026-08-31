@@ -39,6 +39,8 @@ import com.decklotus.companion.ui.theme.LotusPurple
 import com.decklotus.companion.ui.theme.TierConfident
 import com.decklotus.companion.ui.theme.TierPickPrinting
 import com.decklotus.companion.vision.SettleState
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
 
 @Composable
 fun CaptureScreen(
@@ -103,15 +105,31 @@ fun CaptureScreen(
         }
     }
 
-    // Visual Flash Peripheral Cue Animation
-    val flashAlpha = remember { Animatable(0f) }
-    LaunchedEffect(uiState.flashPromptTrigger) {
-        if (uiState.flashPromptTrigger > 0) {
-            flashAlpha.snapTo(0.85f)
-            flashAlpha.animateTo(
+    // 1. Shutter Flash Animation (180ms ease-out)
+    val shutterFlashAlpha = remember { Animatable(0f) }
+    LaunchedEffect(uiState.shutterFlashTrigger) {
+        if (uiState.shutterFlashTrigger > 0) {
+            shutterFlashAlpha.snapTo(0.75f)
+            shutterFlashAlpha.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
+                animationSpec = tween(durationMillis = 180, easing = LinearOutSlowInEasing)
             )
+        }
+    }
+
+    // 2. Price Band Peripheral Pulse Animation (620ms ease-out matching deck-lotus webscanner)
+    val matchPulseAlpha = remember { Animatable(0f) }
+    val matchPulseStroke = remember { Animatable(4f) }
+    LaunchedEffect(uiState.matchPulseTrigger) {
+        if (uiState.matchPulseTrigger > 0) {
+            matchPulseAlpha.snapTo(1f)
+            matchPulseStroke.snapTo(4f)
+            launch {
+                matchPulseStroke.animateTo(14f, tween(durationMillis = 620, easing = FastOutSlowInEasing))
+            }
+            launch {
+                matchPulseAlpha.animateTo(0f, tween(durationMillis = 620, easing = FastOutSlowInEasing))
+            }
         }
     }
 
@@ -129,13 +147,22 @@ fun CaptureScreen(
             }
         }
 
-        // Peripheral Green Flash Frame Border (Signal to feed next card)
-        if (flashAlpha.value > 0.01f) {
+        // Shutter Flash: White frame flash on capture
+        if (shutterFlashAlpha.value > 0.01f) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .alpha(flashAlpha.value)
-                    .border(8.dp, TierConfident)
+                    .background(Color.White.copy(alpha = shutterFlashAlpha.value))
+            )
+        }
+
+        // Price Band Peripheral Pulse (Purple >= $20, Blue >= $10, Green >= $5, Yellow >= $1, Grey < $1, Red = Miss)
+        if (matchPulseAlpha.value > 0.01f) {
+            val pulseColor = Color(uiState.matchPulseColor.toULong())
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .border(matchPulseStroke.value.dp, pulseColor.copy(alpha = matchPulseAlpha.value))
             )
         }
 
@@ -460,7 +487,7 @@ fun CaptureScreen(
                 onIncrement = { viewModel.incrementQuantity(it) },
                 onDecrement = { viewModel.decrementQuantity(it) },
                 onToggleFoil = { viewModel.toggleFoil(it) },
-                onRemove = { viewModel.removeCard(it) },
+                onRemove = { viewModel.removeCardFromSession(it) },
                 onClearAll = { viewModel.clearSession() },
                 onSelectProfile = { viewModel.selectActiveProfile(it) },
                 onCommitToCollection = { viewModel.commitBatchToCollection() }

@@ -30,6 +30,21 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.util.UUID
 
+enum class PriceBand(val minPrice: Double, val colorArgb: Long, val bandName: String) {
+    PURPLE(20.0, 0xFFC084FC, "purple"),
+    BLUE(10.0, 0xFF60A5FA, "blue"),
+    GREEN(5.0, 0xFF4ADE80, "green"),
+    YELLOW(1.0, 0xFFFBBF24, "yellow"),
+    GREY(Double.NEGATIVE_INFINITY, 0xFFCBD5E1, "grey");
+
+    companion object {
+        fun fromPrice(price: Double?): PriceBand {
+            val p = price ?: 0.0
+            return entries.firstOrNull { p >= it.minPrice } ?: GREY
+        }
+    }
+}
+
 data class CaptureTimings(
     val captureMs: Long = 0,
     val hashMs: Long = 0,
@@ -45,7 +60,10 @@ data class CaptureUiState(
     val lastError: String? = null,
     val rectifiedCardBitmap: Bitmap? = null,
     val cradleState: SettleState = SettleState.WAITING_FOR_CARD,
-    val flashPromptTrigger: Long = 0L,
+    val shutterFlashTrigger: Long = 0L,
+    val matchPulseTrigger: Long = 0L,
+    val matchPulseColor: Long = 0xFFCBD5E1,
+    val isMiss: Boolean = false,
     val detectedCard: DetectedCardQuad? = null,
     val isCommitting: Boolean = false
 )
@@ -139,6 +157,43 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
     fun stopAutoScanLoop() {
         autoScanJob?.cancel()
         autoScanJob = null
+        settleDetector.reset()
+    }
+
+    fun removeCardFromSession(id: String) {
+        _sessionCards.update { it.filterNot { item -> item.id == id } }
+    }
+
+    fun incrementQuantity(id: String) {
+        _sessionCards.update { list ->
+            list.map { item ->
+                if (item.id == id) item.copy(quantity = item.quantity + 1) else item
+            }
+        }
+    }
+
+    fun decrementQuantity(id: String) {
+        _sessionCards.update { list ->
+            list.mapNotNull { item ->
+                if (item.id == id) {
+                    val next = item.quantity - 1
+                    if (next <= 0) null else item.copy(quantity = next)
+                } else item
+            }
+        }
+    }
+
+    fun toggleFoil(id: String) {
+        _sessionCards.update { list ->
+            list.map { item ->
+                if (item.id == id) item.copy(isFoil = !item.isFoil) else item
+            }
+        }
+    }
+
+    fun clearSession() {
+        _sessionCards.value = emptyList()
+        _uiState.update { it.copy(lastResponse = null, lastError = null) }
     }
 
     fun toggleAutoScan() {
@@ -163,45 +218,6 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             settingsRepo.updateSettings { it.copy(autoFocus = !it.autoFocus) }
         }
-    }
-
-    fun toggleAutoExposure() {
-        viewModelScope.launch {
-            settingsRepo.updateSettings { it.copy(autoExposure = !it.autoExposure) }
-        }
-    }
-
-    fun incrementQuantity(cardId: String) {
-        _sessionCards.update { list ->
-            list.map { if (it.id == cardId) it.copy(quantity = it.quantity + 1) else it }
-        }
-    }
-
-    fun decrementQuantity(cardId: String) {
-        _sessionCards.update { list ->
-            list.mapNotNull {
-                if (it.id == cardId) {
-                    if (it.quantity > 1) it.copy(quantity = it.quantity - 1) else null
-                } else it
-            }
-        }
-    }
-
-    fun toggleFoil(cardId: String) {
-        _sessionCards.update { list ->
-            list.map { if (it.id == cardId) it.copy(isFoil = !it.isFoil) else it }
-        }
-    }
-
-    fun removeCard(cardId: String) {
-        _sessionCards.update { list ->
-            list.filterNot { it.id == cardId }
-        }
-    }
-
-    fun clearSession() {
-        _sessionCards.value = emptyList()
-        _uiState.update { it.copy(lastResponse = null, lastError = null) }
     }
 
     fun selectActiveProfile(profileId: String) {
@@ -283,7 +299,13 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         if (_uiState.value.isCapturing) return
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isCapturing = true, lastError = null) }
+            _uiState.update { 
+                it.copy(
+                    isCapturing = true, 
+                    lastError = null,
+                    shutterFlashTrigger = System.currentTimeMillis()
+                ) 
+            }
             val totalStart = System.nanoTime()
             val settings = settingsFlow.value
 
@@ -355,7 +377,10 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 )
 
                 if (resp.printing != null && resp.tier != "unresolved") {
+                    val priceVal = resp.marketPriceUsd ?: resp.printing.marketPriceUsd ?: 0.0
+                    val band = PriceBand.fromPrice(priceVal)
                     val isConfident = resp.tier == "confident"
+
                     triggerHaptic(isConfident)
                     if (settings.soundFeedbackEnabled) {
                         if (isConfident) soundFeedback.playSuccessChime() else soundFeedback.playReviewChime()
@@ -365,7 +390,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     addCardToSession(
                         printing = resp.printing,
                         isFoil = fullOcr.isFoil || resp.printing.isFoil,
-                        marketPrice = resp.marketPriceUsd ?: resp.printing.marketPriceUsd ?: 0.26,
+                        marketPrice = priceVal,
                         thumbnail = rectified,
                         tier = resp.tier
                     )
@@ -376,7 +401,9 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                             lastResponse = resp,
                             lastTimings = timings,
                             rectifiedCardBitmap = rectified,
-                            flashPromptTrigger = System.currentTimeMillis(),
+                            matchPulseTrigger = System.currentTimeMillis(),
+                            matchPulseColor = band.colorArgb,
+                            isMiss = false,
                             cradleState = SettleState.LOCKED_AFTER_SCAN
                         )
                     }
@@ -392,6 +419,9 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                             lastResponse = resp,
                             lastError = resp.error ?: "Card not recognized",
                             lastTimings = timings,
+                            matchPulseTrigger = System.currentTimeMillis(),
+                            matchPulseColor = 0xFFF87171,
+                            isMiss = true,
                             cradleState = SettleState.WAITING_FOR_CARD
                         )
                     }
@@ -407,6 +437,9 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                         isCapturing = false,
                         lastError = e.localizedMessage ?: e.javaClass.simpleName,
                         lastTimings = CaptureTimings(totalMs = totalMs),
+                        matchPulseTrigger = System.currentTimeMillis(),
+                        matchPulseColor = 0xFFF87171,
+                        isMiss = true,
                         cradleState = SettleState.WAITING_FOR_CARD
                     )
                 }
@@ -422,12 +455,9 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
             val effect = if (isSuccess) {
                 VibrationEffect.createOneShot(35, VibrationEffect.DEFAULT_AMPLITUDE)
             } else {
-                VibrationEffect.createWaveform(longArrayOf(0, 50, 50, 50), -1)
+                VibrationEffect.createWaveform(longArrayOf(0, 40, 60, 40), -1)
             }
             vib.vibrate(effect)
-        } else {
-            @Suppress("DEPRECATION")
-            vib.vibrate(if (isSuccess) 35 else 100)
         }
     }
 
