@@ -11,7 +11,7 @@ import java.util.UUID
 
 /**
  * Local embedded mock server for milestone 1 walking skeleton verification.
- * Echoes back resolved MTG printings based on OCR / art hash input.
+ * Dynamically resolves card title, set, and collector number from OCR input.
  */
 class MockIngestServer(
     private val json: Json = Json { ignoreUnknownKeys = true }
@@ -30,28 +30,32 @@ class MockIngestServer(
                     val body = request.body.readUtf8()
                     return try {
                         val req = json.decodeFromString(IngestRequest.serializer(), body)
-                        val set = req.ocr.setCode ?: "ECC"
-                        val collector = req.ocr.collector ?: "0001"
+                        val set = req.ocr.setCode ?: "WOE"
+                        val collector = req.ocr.collector ?: "0045"
                         val isFoil = req.ocr.rawLines.any { it.contains("★") }
 
-                        val sampleName = when (set) {
-                            "ECC" -> "Cultivate"
-                            "MH3" -> "Wrath of the Skies"
-                            "FDN" -> "Llanowar Elves"
-                            else -> "Card ($set #$collector)"
-                        }
+                        val resolvedName = req.ocr.name?.ifBlank { null }
+                            ?: when (set) {
+                                "WOE", "SPG", "SOA" -> "Monstrous Rage"
+                                "ECC" -> "Cultivate"
+                                "MH3" -> "Wrath of the Skies"
+                                "FDN" -> "Llanowar Elves"
+                                else -> "Monstrous Rage"
+                            }
 
                         val response = IngestResponse(
                             tier = "confident",
                             printing = IngestResolvedPrinting(
                                 uuid = UUID.randomUUID().toString(),
-                                name = sampleName,
+                                name = resolvedName,
                                 setCode = set,
                                 collector = collector,
-                                isFoil = isFoil
+                                isFoil = isFoil,
+                                marketPriceUsd = 0.26
                             ),
                             committed = true,
-                            hashDistanceBits = 28
+                            hashDistanceBits = 22,
+                            marketPriceUsd = 0.26
                         )
                         MockResponse()
                             .setResponseCode(200)

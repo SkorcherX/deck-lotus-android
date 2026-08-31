@@ -17,6 +17,7 @@ import com.decklotus.companion.network.*
 import com.decklotus.companion.vision.CardGeometry
 import com.decklotus.companion.vision.CardHasher
 import com.decklotus.companion.vision.CollectorOcr
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -34,7 +35,7 @@ data class CaptureUiState(
     val lastTimings: CaptureTimings? = null,
     val lastError: String? = null,
     val rectifiedCardBitmap: Bitmap? = null,
-    val collectorCropBitmap: Bitmap? = null
+    val sessionScanCount: Int = 0
 )
 
 class CaptureViewModel(application: Application) : AndroidViewModel(application) {
@@ -60,7 +61,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
     }
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             settingsFlow.collect { settings ->
                 if (settings.useMockServer && !mockServer.isRunning) {
                     mockServer.start(8088)
@@ -71,13 +72,13 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-        fun toggleTorch() {
+    fun toggleTorch() {
         viewModelScope.launch {
             settingsRepo.updateSettings { it.copy(torchEnabled = !it.torchEnabled) }
         }
     }
 
-        fun toggleAutoFocus() {
+    fun toggleAutoFocus() {
         viewModelScope.launch {
             settingsRepo.updateSettings { it.copy(autoFocus = !it.autoFocus) }
         }
@@ -99,7 +100,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
             try {
                 val settings = settingsFlow.value
 
-                // 1. Grab frame from Camera2 session
+                // 1. Grab camera frame
                 val capStart = System.nanoTime()
                 val rawBitmap = cameraController.takePictureBitmap()
                 val capMs = (System.nanoTime() - capStart) / 1_000_000
@@ -130,31 +131,35 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 val hashes = CardHasher.hashRectified(rectified)
                 val hashMs = (System.nanoTime() - hashStart) / 1_000_000
 
-                // 3. ML Kit Text Recognition v2 on collector block (Tensor G5 NPU)
+                // 3. Dual-Region ML Kit OCR (Title + Collector) on Tensor G5
                 val ocrStart = System.nanoTime()
+                val titleCrop = CollectorOcr.cropTitleRegion(rectified)
                 val collectorCrop = CollectorOcr.cropCollectorRegion(rectified)
-                val recognized = CollectorOcr.recognizeText(collectorCrop)
-                val parsedOcr = CollectorOcr.parseOcrResult(recognized)
+
+                val titleRecognized = CollectorOcr.recognizeText(titleCrop)
+                val collectorRecognized = CollectorOcr.recognizeText(collectorCrop)
+                val fullOcr = CollectorOcr.parseFullCardOcr(titleRecognized, collectorRecognized)
                 val ocrMs = (System.nanoTime() - ocrStart) / 1_000_000
 
-                // 4. Submit to Ingest API / Mock
+                // 4. Ingest API POST
                 val liveMeta = cameraController.liveMetadata.value
                 val request = IngestRequest(
                     artHash = hashes.artHash,
                     frameHash = hashes.frameHash,
                     ocr = IngestOcrData(
-                        setCode = parsedOcr.setCode,
-                        collector = parsedOcr.collectorNumber,
-                        language = parsedOcr.language,
-                        rawLines = parsedOcr.rawLines,
-                        confidence = parsedOcr.confidence
+                        name = fullOcr.name,
+                        setCode = fullOcr.setCode,
+                        collector = fullOcr.collectorNumber,
+                        language = fullOcr.language,
+                        rawLines = fullOcr.rawLines,
+                        confidence = fullOcr.confidence
                     ),
                     capture = IngestCaptureMetadata(
                         exposureNs = liveMeta.exposureTimeNs,
                         iso = liveMeta.isoSensitivity,
                         focusDist = liveMeta.focusDistanceDiopters
                     ),
-                    commit = IngestCommitOptions(isFoil = parsedOcr.isFoil)
+                    commit = IngestCommitOptions(isFoil = fullOcr.isFoil)
                 )
 
                 val targetUrl = if (settings.useMockServer) "http://127.0.0.1:8088" else settings.baseUrl
@@ -177,7 +182,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                             lastResponse = netResult.response,
                             lastTimings = timings,
                             rectifiedCardBitmap = rectified,
-                            collectorCropBitmap = collectorCrop
+                            sessionScanCount = it.sessionScanCount + 1
                         )
                     }
                 } else {

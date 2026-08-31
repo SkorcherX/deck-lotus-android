@@ -13,22 +13,13 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * Optical character recognition for MTG collector block (bottom-left of modern cards).
- * Uses Google ML Kit Text Recognition v2 (accelerated by Tensor G5 NPU on Pixel 10 Pro).
+ * Optical character recognition for MTG card title and collector block.
+ * Uses Google ML Kit Text Recognition v2 (Tensor G5 NPU on Pixel 10 Pro).
  */
 object CollectorOcr {
 
-    /**
-     * Normalized coordinates for bottom-left collector block.
-     */
-    data class OcrCropBounds(
-        val x: Double = 0.02,
-        val y: Double = 0.88,
-        val w: Double = 0.50,
-        val h: Double = 0.11
-    )
-
-    data class ParsedCollector(
+    data class ParsedCardOcr(
+        val name: String? = null,
         val setCode: String? = null,
         val collectorNumber: String? = null,
         val language: String? = null,
@@ -42,22 +33,37 @@ object CollectorOcr {
     }
 
     /**
-     * Crop the collector region from a rectified card bitmap.
+     * Crop the collector region (bottom-left) from a rectified card bitmap.
      */
-    fun cropCollectorRegion(rectifiedCard: Bitmap, bounds: OcrCropBounds = OcrCropBounds()): Bitmap {
+    fun cropCollectorRegion(rectifiedCard: Bitmap): Bitmap {
         val width = rectifiedCard.width
         val height = rectifiedCard.height
 
-        val x0 = max(0, (bounds.x * width).roundToInt())
-        val y0 = max(0, (bounds.y * height).roundToInt())
-        val cw = min(width - x0, (bounds.w * width).roundToInt())
-        val ch = min(height - y0, (bounds.h * height).roundToInt())
+        val x0 = max(0, (0.02 * width).roundToInt())
+        val y0 = max(0, (0.86 * height).roundToInt())
+        val cw = min(width - x0, (0.60 * width).roundToInt())
+        val ch = min(height - y0, (0.13 * height).roundToInt())
 
         return Bitmap.createBitmap(rectifiedCard, x0, y0, max(1, cw), max(1, ch))
     }
 
     /**
-     * Run ML Kit Text Recognition asynchronously on the provided bitmap crop.
+     * Crop the card name/title header region (top) from a rectified card bitmap.
+     */
+    fun cropTitleRegion(rectifiedCard: Bitmap): Bitmap {
+        val width = rectifiedCard.width
+        val height = rectifiedCard.height
+
+        val x0 = max(0, (0.05 * width).roundToInt())
+        val y0 = max(0, (0.03 * height).roundToInt())
+        val cw = min(width - x0, (0.80 * width).roundToInt())
+        val ch = min(height - y0, (0.10 * height).roundToInt())
+
+        return Bitmap.createBitmap(rectifiedCard, x0, y0, max(1, cw), max(1, ch))
+    }
+
+    /**
+     * Run ML Kit Text Recognition asynchronously on the provided bitmap.
      */
     suspend fun recognizeText(bitmap: Bitmap): Text = suspendCancellableCoroutine { continuation ->
         val inputImage = InputImage.fromBitmap(bitmap, 0)
@@ -71,24 +77,41 @@ object CollectorOcr {
     }
 
     /**
-     * Parse collector information from recognized text blocks.
+     * Parse full card OCR by combining title recognition and collector block recognition.
      */
-    fun parseOcrResult(visionText: Text): ParsedCollector {
-        val rawLines = visionText.textBlocks.flatMap { block ->
-            block.lines.map { it.text.trim() }
-        }.filter { it.isNotEmpty() }
+    fun parseFullCardOcr(
+        titleText: Text,
+        collectorText: Text,
+        fullImageText: Text? = null
+    ): ParsedCardOcr {
+        val titleLines = titleText.textBlocks.flatMap { it.lines.map { l -> l.text.trim() } }.filter { it.isNotBlank() }
+        val collectorLines = collectorText.textBlocks.flatMap { it.lines.map { l -> l.text.trim() } }.filter { it.isNotBlank() }
+        val allLines = (titleLines + collectorLines + (fullImageText?.textBlocks?.flatMap { it.lines.map { l -> l.text.trim() } } ?: emptyList())).distinct()
 
-        return parseRawLines(rawLines)
+        // Extract card name from the title header lines
+        val rawName = titleLines.firstOrNull { it.length >= 3 && !it.startsWith("{") && !it.all { c -> c.isDigit() } }
+            ?: allLines.firstOrNull { it.length >= 3 && !it.contains("•") && !it.contains("/") && !it.all { c -> c.isDigit() } }
+
+        val cleanName = rawName?.replace(Regex("""[0-9/\{\}]"""), "")?.trim()
+
+        val parsedCollector = parseRawCollectorLines(collectorLines.ifEmpty { allLines })
+
+        return ParsedCardOcr(
+            name = cleanName,
+            setCode = parsedCollector.setCode,
+            collectorNumber = parsedCollector.collectorNumber,
+            language = parsedCollector.language,
+            isFoil = parsedCollector.isFoil,
+            rawLines = allLines,
+            confidence = if (cleanName != null && parsedCollector.collectorNumber != null) 0.95f else 0.70f
+        )
     }
 
     /**
-     * Pure regex parsing of OCR output lines.
-     * Modern card format:
-     *   Line 1: "ECC • EN" or "MH3 • EN" or "FDN • EN" or "2X2 • EN"
-     *   Line 2: "0001" or "0123/0387" or "0015 ★"
+     * Parse collector block strings.
      */
-    fun parseRawLines(lines: List<String>): ParsedCollector {
-        if (lines.isEmpty()) return ParsedCollector()
+    fun parseRawCollectorLines(lines: List<String>): ParsedCardOcr {
+        if (lines.isEmpty()) return ParsedCardOcr()
 
         val fullText = lines.joinToString("\n")
         var setCode: String? = null
@@ -96,17 +119,12 @@ object CollectorOcr {
         var language: String? = null
         var isFoil = false
 
-        // Detect foil star or symbol (★, †, *F*, (F))
         if (fullText.contains("★") || fullText.contains("☆") || fullText.contains("*F*", ignoreCase = true) || fullText.contains("(F)", ignoreCase = true)) {
             isFoil = true
         }
 
-        // Pattern 1: Set and Lang separated by bullet or space/dot
-        // e.g. "ECC • EN", "MH3.EN", "FDN - EN", "BLB EN", "2X2/EN"
         val setLangRegex = Regex("""([A-Za-z0-9]{3,5})\s*[\u2022\u2219\u00B7\.\-\/]\s*([A-Za-z]{2,3})""", RegexOption.IGNORE_CASE)
-
-        // Pattern 2: Collector number (e.g. "0001", "0123/0387", "123a", "0052b", "245★")
-        val collectorRegex = Regex("""\b(\d{1,4}[A-Za-z]?)(?:\s*\/\s*\d{1,4})?\b""")
+        val collectorRegex = Regex("""\b(?:U|R|M|C|L|T|S)?\s*(\d{1,4}[A-Za-z]?)(?:\s*\/\s*\d{1,4})?\b""", RegexOption.IGNORE_CASE)
 
         for (line in lines) {
             val clean = line.replace("★", "").replace("☆", "").trim()
@@ -120,7 +138,6 @@ object CollectorOcr {
 
             val numMatch = collectorRegex.find(clean)
             if (numMatch != null && collectorNumber == null) {
-                // Ensure it is not mistaken for a 4-letter set code
                 val candidate = numMatch.groupValues[1]
                 if (candidate.any { it.isDigit() }) {
                     collectorNumber = candidate
@@ -128,7 +145,7 @@ object CollectorOcr {
             }
         }
 
-        // Fallback: If line contains both set and number like "ECC 0001" or "FDN 123"
+        // Combined fallback: e.g. "WOE 0045" or "ECC 0001" or "SOA EN"
         if (setCode == null || collectorNumber == null) {
             val combinedRegex = Regex("""\b([A-Za-z0-9]{3,5})\s+([A-Za-z0-9★†-]*\d[A-Za-z0-9★†-]*)\b""")
             for (line in lines) {
@@ -140,21 +157,13 @@ object CollectorOcr {
             }
         }
 
-        // Compute approximate confidence based on how many fields were resolved
-        val confidence = when {
-            setCode != null && collectorNumber != null && language != null -> 0.95f
-            setCode != null && collectorNumber != null -> 0.90f
-            setCode != null || collectorNumber != null -> 0.60f
-            else -> 0.10f
-        }
-
-        return ParsedCollector(
+        return ParsedCardOcr(
+            name = null,
             setCode = setCode,
             collectorNumber = collectorNumber,
             language = language,
             isFoil = isFoil,
-            rawLines = lines,
-            confidence = confidence
+            rawLines = lines
         )
     }
 }

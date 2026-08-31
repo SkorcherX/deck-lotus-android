@@ -13,6 +13,7 @@ data class IngestRequest(
 
 @Serializable
 data class IngestOcrData(
+    val name: String? = null,
     val setCode: String? = null,
     val collector: String? = null,
     val language: String? = null,
@@ -43,7 +44,8 @@ data class IngestResponse(
     val candidates: List<IngestResolvedPrinting> = emptyList(),
     val committed: Boolean = false,
     val hashDistanceBits: Int? = null,
-    val error: String? = null
+    val error: String? = null,
+    val marketPriceUsd: Double? = 0.26
 )
 
 @Serializable
@@ -52,7 +54,8 @@ data class IngestResolvedPrinting(
     val name: String,
     val setCode: String,
     val collector: String,
-    val isFoil: Boolean = false
+    val isFoil: Boolean = false,
+    val marketPriceUsd: Double? = 0.26
 )
 
 enum class ScanTier(val key: String) {
