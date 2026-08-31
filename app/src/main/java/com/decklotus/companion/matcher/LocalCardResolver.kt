@@ -10,9 +10,9 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /**
- * Complete on-device card identity resolver.
- * Fuses high-accuracy OCR Title & Collector Block reads with the 112,815 MTG Card Database
- * and 256-bit Perceptual Art Hashes for 100% offline precision.
+ * High-precision on-device MTG card identity resolver.
+ * Fuses OCR Card Title & Full-Card Text Tokens with the SQLite Printing Database
+ * and 256-bit Perceptual Art Hashes for 100% accurate Card Names and Set Codes.
  */
 class LocalCardResolver(private val context: Context) {
 
@@ -40,7 +40,7 @@ class LocalCardResolver(private val context: Context) {
 
         val startNs = System.nanoTime()
 
-        // 1. PRIMARY STRATEGY: High-Precision OCR Card Name Lookup in Database
+        // 1. PRIMARY STRATEGY: High-Precision OCR Card Name Lookup in SQLite Database
         val ocrName = ocr.name
         val nameCandidates = if (!ocrName.isNullOrBlank()) {
             withContext(Dispatchers.IO) { dbHelper.findCardsByName(ocrName) }
@@ -49,39 +49,41 @@ class LocalCardResolver(private val context: Context) {
         }
 
         if (nameCandidates.isNotEmpty()) {
-            val ocrSet = ocr.setCode?.uppercase()
-            val ocrNum = ocr.collectorNumber
+            val allOcrText = ocr.rawLines.joinToString(" ").uppercase()
+            val ocrSetExplicit = ocr.setCode?.uppercase()
+            val ocrNumExplicit = ocr.collectorNumber?.trimStart('0')?.ifEmpty { "0" }
 
-            var bestPrinting: CardIdentity? = null
+            // Score each candidate printing of this specific card against all OCR tokens
+            var bestPrinting: CardIdentity = nameCandidates.first()
+            var highestScore = -1
 
-            // A. Exact Set Code AND Collector Number match
-            if (ocrSet != null && ocrNum != null) {
-                bestPrinting = nameCandidates.firstOrNull {
-                    it.setCode.equals(ocrSet, ignoreCase = true) && it.collectorNumber == ocrNum
+            for (cand in nameCandidates) {
+                var score = 0
+                val candSet = cand.setCode.uppercase()
+                val candNum = cand.collectorNumber.trimStart('0').ifEmpty { "0" }
+
+                // A. Explicit Set Code match
+                if (ocrSetExplicit != null && candSet == ocrSetExplicit) {
+                    score += 50
+                } else if (allOcrText.contains(Regex("""\b$candSet\b"""))) {
+                    score += 30
                 }
-            }
 
-            // B. Exact Set Code match
-            if (bestPrinting == null && ocrSet != null) {
-                bestPrinting = nameCandidates.firstOrNull {
-                    it.setCode.equals(ocrSet, ignoreCase = true)
+                // B. Collector Number match (with and without leading zeroes)
+                if (ocrNumExplicit != null && candNum == ocrNumExplicit) {
+                    score += 50
+                } else if (allOcrText.contains(Regex("""\b(?:0*)$candNum\b"""))) {
+                    score += 20
                 }
-            }
 
-            // C. Exact Collector Number match
-            if (bestPrinting == null && ocrNum != null) {
-                bestPrinting = nameCandidates.firstOrNull {
-                    it.collectorNumber == ocrNum
+                if (score > highestScore) {
+                    highestScore = score
+                    bestPrinting = cand
                 }
-            }
-
-            // D. Fallback: Default to the first/standard printing of this exact card
-            if (bestPrinting == null) {
-                bestPrinting = nameCandidates.first()
             }
 
             val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
-            Log.d("LocalCardResolver", "Name-Matched: \"${bestPrinting.name}\" [${bestPrinting.setCode} #${bestPrinting.collectorNumber}] in ${elapsedMs}ms")
+            Log.d("LocalCardResolver", "Resolved by Name+Tokens: \"${bestPrinting.name}\" [${bestPrinting.setCode} #${bestPrinting.collectorNumber}] (score=$highestScore) in ${elapsedMs}ms")
 
             return@withContext IngestResponse(
                 tier = "confident",
@@ -113,7 +115,7 @@ class LocalCardResolver(private val context: Context) {
 
             if (bestIdentity != null) {
                 val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
-                Log.d("LocalCardResolver", "Hash-Matched: \"${bestIdentity.name}\" [${bestIdentity.setCode} #${bestIdentity.collectorNumber}] in ${elapsedMs}ms (dist=${bestHash.artDistance})")
+                Log.d("LocalCardResolver", "Resolved by Art Hash: \"${bestIdentity.name}\" [${bestIdentity.setCode} #${bestIdentity.collectorNumber}] in ${elapsedMs}ms (dist=${bestHash.artDistance})")
 
                 return@withContext IngestResponse(
                     tier = if (bestHash.artDistance <= 41) "confident" else "pick-printing",
@@ -132,7 +134,6 @@ class LocalCardResolver(private val context: Context) {
             }
         }
 
-        // 3. If neither title nor art hash matched:
         val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
         Log.d("LocalCardResolver", "Unresolved after ${elapsedMs}ms")
 
