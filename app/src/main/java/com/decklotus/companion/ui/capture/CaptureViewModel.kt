@@ -71,6 +71,18 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+        fun toggleTorch() {
+        viewModelScope.launch {
+            settingsRepo.updateSettings { it.copy(torchEnabled = !it.torchEnabled) }
+        }
+    }
+
+    fun toggleAutoExposure() {
+        viewModelScope.launch {
+            settingsRepo.updateSettings { it.copy(autoExposure = !it.autoExposure) }
+        }
+    }
+
     fun triggerCapture(cameraController: CameraController) {
         if (_uiState.value.isCapturing) return
 

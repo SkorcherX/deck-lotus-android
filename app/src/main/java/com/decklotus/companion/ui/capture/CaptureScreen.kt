@@ -9,22 +9,24 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Camera
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.decklotus.companion.camera.CameraController
 import com.decklotus.companion.ui.components.CameraPreviewView
 import com.decklotus.companion.ui.components.DiagnosticsOverlay
 import com.decklotus.companion.ui.components.ScanResultBadge
+import com.decklotus.companion.ui.theme.LotusCyan
 import com.decklotus.companion.ui.theme.LotusPurple
+import com.decklotus.companion.ui.theme.TierPickPrinting
 
 @Composable
 fun CaptureScreen(
@@ -82,7 +84,7 @@ fun CaptureScreen(
             }
         }
 
-        // Top HUD with Diagnostics & Settings button
+        // Top HUD with Diagnostics & Quick Action Controls
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -90,23 +92,73 @@ fun CaptureScreen(
                 .statusBarsPadding()
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Spacer(modifier = Modifier.width(48.dp))
                 DiagnosticsOverlay(
                     metadata = liveMeta,
                     useMock = settings.useMockServer,
+                    isAutoExposure = settings.autoExposure,
+                    isTorchOn = settings.torchEnabled,
                     modifier = Modifier.weight(1f)
                 )
-                IconButton(
-                    onClick = onNavigateToSettings,
-                    modifier = Modifier
-                        .padding(start = 8.dp)
-                        .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(start = 4.dp)
                 ) {
-                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White)
+                    // Torch Quick Toggle
+                    IconButton(
+                        onClick = {
+                            viewModel.toggleTorch()
+                            cameraController.updateManualControls(settings.copy(torchEnabled = !settings.torchEnabled))
+                        },
+                        modifier = Modifier
+                            .size(38.dp)
+                            .background(
+                                if (settings.torchEnabled) TierPickPrinting else Color.Black.copy(alpha = 0.6f),
+                                CircleShape
+                            )
+                    ) {
+                        Icon(
+                            if (settings.torchEnabled) Icons.Default.FlashOn else Icons.Default.FlashOff,
+                            contentDescription = "Torch",
+                            tint = if (settings.torchEnabled) Color.Black else Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // AE vs Rig Lock Quick Toggle
+                    IconButton(
+                        onClick = {
+                            viewModel.toggleAutoExposure()
+                            cameraController.updateManualControls(settings.copy(autoExposure = !settings.autoExposure))
+                        },
+                        modifier = Modifier
+                            .size(38.dp)
+                            .background(
+                                if (settings.autoExposure) LotusCyan else Color.Black.copy(alpha = 0.6f),
+                                CircleShape
+                            )
+                    ) {
+                        Icon(
+                            if (settings.autoExposure) Icons.Default.BrightnessAuto else Icons.Default.Lock,
+                            contentDescription = "AE Mode",
+                            tint = if (settings.autoExposure) Color.Black else Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // Settings Navigation Button
+                    IconButton(
+                        onClick = onNavigateToSettings,
+                        modifier = Modifier
+                            .size(38.dp)
+                            .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                    ) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
                 }
             }
         }

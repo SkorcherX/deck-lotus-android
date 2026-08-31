@@ -11,7 +11,6 @@ import android.hardware.camera2.TotalCaptureResult
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.CaptureRequestOptions
-import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
@@ -33,7 +32,6 @@ import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-@OptIn(ExperimentalCamera2Interop::class)
 class CameraController(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner
@@ -63,7 +61,6 @@ class CameraController(
             val imageCaptureBuilder = ImageCapture.Builder()
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
 
-            // Camera2 manual control extender
             val previewExtender = Camera2Interop.Extender(previewBuilder)
             val captureExtender = Camera2Interop.Extender(imageCaptureBuilder)
 
@@ -100,7 +97,6 @@ class CameraController(
                 }
             }
 
-            // Apply manual locks to preview
             previewExtender.setSessionCaptureCallback(captureCallback)
             applyManualControls(previewExtender, settings)
             applyManualControls(captureExtender, settings)
@@ -116,12 +112,18 @@ class CameraController(
 
             try {
                 provider.unbindAll()
-                camera = provider.bindToLifecycle(
+                val boundCamera = provider.bindToLifecycle(
                     lifecycleOwner,
                     cameraSelector,
                     preview,
                     capture
                 )
+                camera = boundCamera
+
+                if (settings.torchEnabled) {
+                    boundCamera.cameraControl.enableTorch(true)
+                }
+
                 onCameraBound()
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -133,6 +135,7 @@ class CameraController(
         extender: Camera2Interop.Extender<*>,
         settings: AppSettings
     ) {
+        // AF Control: fixed focus distance
         extender.setCaptureRequestOption(
             CaptureRequest.CONTROL_AF_MODE,
             CaptureRequest.CONTROL_AF_MODE_OFF
@@ -141,18 +144,28 @@ class CameraController(
             CaptureRequest.LENS_FOCUS_DISTANCE,
             settings.focusDistanceDiopters
         )
-        extender.setCaptureRequestOption(
-            CaptureRequest.CONTROL_AE_MODE,
-            CaptureRequest.CONTROL_AE_MODE_OFF
-        )
-        extender.setCaptureRequestOption(
-            CaptureRequest.SENSOR_EXPOSURE_TIME,
-            settings.exposureTimeNs
-        )
-        extender.setCaptureRequestOption(
-            CaptureRequest.SENSOR_SENSITIVITY,
-            settings.isoSensitivity
-        )
+
+        // AE Control: Auto or Manual
+        if (settings.autoExposure) {
+            extender.setCaptureRequestOption(
+                CaptureRequest.CONTROL_AE_MODE,
+                CaptureRequest.CONTROL_AE_MODE_ON
+            )
+        } else {
+            extender.setCaptureRequestOption(
+                CaptureRequest.CONTROL_AE_MODE,
+                CaptureRequest.CONTROL_AE_MODE_OFF
+            )
+            extender.setCaptureRequestOption(
+                CaptureRequest.SENSOR_EXPOSURE_TIME,
+                settings.exposureTimeNs
+            )
+            extender.setCaptureRequestOption(
+                CaptureRequest.SENSOR_SENSITIVITY,
+                settings.isoSensitivity
+            )
+        }
+
         extender.setCaptureRequestOption(
             CaptureRequest.TONEMAP_MODE,
             CaptureRequest.TONEMAP_MODE_FAST
@@ -162,16 +175,21 @@ class CameraController(
     fun updateManualControls(settings: AppSettings) {
         val cam = camera ?: return
         val control = Camera2CameraControl.from(cam.cameraControl)
-        val options = CaptureRequestOptions.Builder()
+        val builder = CaptureRequestOptions.Builder()
             .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
             .setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, settings.focusDistanceDiopters)
-            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-            .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, settings.exposureTimeNs)
-            .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, settings.isoSensitivity)
             .setCaptureRequestOption(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_FAST)
-            .build()
 
-        control.setCaptureRequestOptions(options)
+        if (settings.autoExposure) {
+            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+        } else {
+            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+            builder.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, settings.exposureTimeNs)
+            builder.setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, settings.isoSensitivity)
+        }
+
+        control.setCaptureRequestOptions(builder.build())
+        cam.cameraControl.enableTorch(settings.torchEnabled)
     }
 
     suspend fun takePictureBitmap(): Bitmap = suspendCancellableCoroutine { continuation ->

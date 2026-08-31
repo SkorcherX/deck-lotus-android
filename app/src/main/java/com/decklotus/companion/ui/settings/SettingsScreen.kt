@@ -121,7 +121,7 @@ fun SettingsScreen(
 
             // Section 2: Camera Manual Controls
             Text(
-                text = "MANUAL OPTICAL CONTROLS (PIXEL 10 PRO)",
+                text = "OPTICAL CONTROLS & RIG LOCKS",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 color = LotusPurple,
@@ -133,12 +133,53 @@ fun SettingsScreen(
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    // Auto Exposure Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Auto-Exposure (AE)", fontWeight = FontWeight.Medium)
+                            Text("Enable for ambient room light; disable to lock 1/500s in lit cradle", fontSize = 12.sp, color = TextSecondary)
+                        }
+                        Switch(
+                            checked = settings.autoExposure,
+                            onCheckedChange = { checked ->
+                                viewModel.updateSettings { it.copy(autoExposure = checked) }
+                            }
+                        )
+                    }
+
+                    // Torch Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Phone Torch Illumination", fontWeight = FontWeight.Medium)
+                            Text("Provides constant light on dark cards", fontSize = 12.sp, color = TextSecondary)
+                        }
+                        Switch(
+                            checked = settings.torchEnabled,
+                            onCheckedChange = { checked ->
+                                viewModel.updateSettings { it.copy(torchEnabled = checked) }
+                            }
+                        )
+                    }
+
+                    HorizontalDivider(color = SurfaceBorder)
+
+                    // Manual Shutter Speed
                     Column {
-                        Text("Locked Shutter Speed", fontWeight = FontWeight.Medium)
-                        Text("High speeds freeze falling cards without drop blur", fontSize = 12.sp, color = TextSecondary)
+                        Text("Manual Shutter Speed", fontWeight = FontWeight.Medium)
+                        Text(if (settings.autoExposure) "Inactive while Auto-Exposure is ON" else "Locked shutter freezes card drop motion", fontSize = 12.sp, color = TextSecondary)
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             val speeds = listOf(
+                                "1/60s" to 16_666_666L,
+                                "1/125s" to 8_000_000L,
                                 "1/250s" to 4_000_000L,
                                 "1/500s" to 2_000_000L,
                                 "1/1000s" to 1_000_000L
@@ -147,7 +188,7 @@ fun SettingsScreen(
                                 val selected = settings.exposureTimeNs == ns
                                 FilterChip(
                                     selected = selected,
-                                    onClick = { viewModel.updateSettings { it.copy(exposureTimeNs = ns) } },
+                                    onClick = { viewModel.updateSettings { it.copy(exposureTimeNs = ns, autoExposure = false) } },
                                     label = { Text(label) }
                                 )
                             }
@@ -156,16 +197,17 @@ fun SettingsScreen(
 
                     HorizontalDivider(color = SurfaceBorder)
 
+                    // Manual ISO Gain
                     Column {
-                        Text("Locked ISO Sensitivity", fontWeight = FontWeight.Medium)
-                        Text("Low ISO guarantees clean signals without sensor noise", fontSize = 12.sp, color = TextSecondary)
+                        Text("Manual ISO Sensitivity", fontWeight = FontWeight.Medium)
+                        Text(if (settings.autoExposure) "Inactive while Auto-Exposure is ON" else "Locked ISO guarantees deterministic values", fontSize = 12.sp, color = TextSecondary)
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(50, 100, 200, 400).forEach { iso ->
+                            listOf(100, 200, 400, 800, 1600).forEach { iso ->
                                 val selected = settings.isoSensitivity == iso
                                 FilterChip(
                                     selected = selected,
-                                    onClick = { viewModel.updateSettings { it.copy(isoSensitivity = iso) } },
+                                    onClick = { viewModel.updateSettings { it.copy(isoSensitivity = iso, autoExposure = false) } },
                                     label = { Text("ISO $iso") }
                                 )
                             }
@@ -174,6 +216,7 @@ fun SettingsScreen(
 
                     HorizontalDivider(color = SurfaceBorder)
 
+                    // Fixed Focal Distance (Diopters)
                     Column {
                         val currentDpt = settings.focusDistanceDiopters
                         val approxCm = if (currentDpt > 0) (100.0 / currentDpt).toInt() else 0
@@ -181,10 +224,10 @@ fun SettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Fixed Focal Distance", fontWeight = FontWeight.Medium)
+                            Text("Fixed Focal Distance (AF Locked)", fontWeight = FontWeight.Medium)
                             Text("~${approxCm}cm (${String.format("%.1f", currentDpt)} dpt)", color = LotusCyan, fontWeight = FontWeight.Bold)
                         }
-                        Text("Calibrate to Card Slinger 3.0 cradle surface distance", fontSize = 12.sp, color = TextSecondary)
+                        Text("Calibrated for Card Slinger 3.0 cradle distance", fontSize = 12.sp, color = TextSecondary)
                         Slider(
                             value = currentDpt,
                             onValueChange = { dpt ->

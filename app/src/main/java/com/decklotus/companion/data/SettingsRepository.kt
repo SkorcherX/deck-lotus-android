@@ -2,13 +2,7 @@ package com.decklotus.companion.data
 
 import android.content.Context
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.floatPreferencesKey
-import androidx.datastore.preferences.core.intPreferencesKey
-import androidx.datastore.preferences.core.longPreferencesKey
-import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -21,6 +15,8 @@ class SettingsRepository(private val context: Context) {
         val BASE_URL = stringPreferencesKey("base_url")
         val API_TOKEN = stringPreferencesKey("api_token")
         val USE_MOCK_SERVER = booleanPreferencesKey("use_mock_server")
+        val AUTO_EXPOSURE = booleanPreferencesKey("auto_exposure")
+        val TORCH_ENABLED = booleanPreferencesKey("torch_enabled")
         val EXPOSURE_NS = longPreferencesKey("exposure_ns")
         val ISO = intPreferencesKey("iso")
         val FOCUS_DIST = floatPreferencesKey("focus_dist")
@@ -32,8 +28,10 @@ class SettingsRepository(private val context: Context) {
             baseUrl = prefs[Keys.BASE_URL] ?: "http://192.168.1.100:3000",
             apiToken = prefs[Keys.API_TOKEN] ?: "",
             useMockServer = prefs[Keys.USE_MOCK_SERVER] ?: true,
-            exposureTimeNs = prefs[Keys.EXPOSURE_NS] ?: 2_000_000L,
-            isoSensitivity = prefs[Keys.ISO] ?: 100,
+            autoExposure = prefs[Keys.AUTO_EXPOSURE] ?: true,
+            torchEnabled = prefs[Keys.TORCH_ENABLED] ?: false,
+            exposureTimeNs = prefs[Keys.EXPOSURE_NS] ?: 8_000_000L,
+            isoSensitivity = prefs[Keys.ISO] ?: 800,
             focusDistanceDiopters = prefs[Keys.FOCUS_DIST] ?: 4.5f,
             pinnedPhysicalCameraId = prefs[Keys.PINNED_CAMERA_ID] ?: ""
         )
@@ -45,8 +43,10 @@ class SettingsRepository(private val context: Context) {
                 baseUrl = prefs[Keys.BASE_URL] ?: "http://192.168.1.100:3000",
                 apiToken = prefs[Keys.API_TOKEN] ?: "",
                 useMockServer = prefs[Keys.USE_MOCK_SERVER] ?: true,
-                exposureTimeNs = prefs[Keys.EXPOSURE_NS] ?: 2_000_000L,
-                isoSensitivity = prefs[Keys.ISO] ?: 100,
+                autoExposure = prefs[Keys.AUTO_EXPOSURE] ?: true,
+                torchEnabled = prefs[Keys.TORCH_ENABLED] ?: false,
+                exposureTimeNs = prefs[Keys.EXPOSURE_NS] ?: 8_000_000L,
+                isoSensitivity = prefs[Keys.ISO] ?: 800,
                 focusDistanceDiopters = prefs[Keys.FOCUS_DIST] ?: 4.5f,
                 pinnedPhysicalCameraId = prefs[Keys.PINNED_CAMERA_ID] ?: ""
             )
@@ -54,6 +54,8 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.BASE_URL] = updated.baseUrl
             prefs[Keys.API_TOKEN] = updated.apiToken
             prefs[Keys.USE_MOCK_SERVER] = updated.useMockServer
+            prefs[Keys.AUTO_EXPOSURE] = updated.autoExposure
+            prefs[Keys.TORCH_ENABLED] = updated.torchEnabled
             prefs[Keys.EXPOSURE_NS] = updated.exposureTimeNs
             prefs[Keys.ISO] = updated.isoSensitivity
             prefs[Keys.FOCUS_DIST] = updated.focusDistanceDiopters

@@ -7,7 +7,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -19,12 +18,14 @@ import com.decklotus.companion.ui.theme.*
 fun DiagnosticsOverlay(
     metadata: LiveCaptureMetadata,
     useMock: Boolean,
+    isAutoExposure: Boolean,
+    isTorchOn: Boolean,
     modifier: Modifier = Modifier
 ) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(12.dp)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
             .background(SurfaceDark.copy(alpha = 0.85f), RoundedCornerShape(12.dp))
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
@@ -35,23 +36,37 @@ fun DiagnosticsOverlay(
         ) {
             Text(
                 text = "RIG: Pixel 10 Pro + Slinger 3.0",
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = LotusPurple,
                 fontFamily = FontFamily.Monospace
             )
 
-            if (useMock) {
-                Text(
-                    text = "MOCK SERVER ACTIVE",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TierPickPrinting,
-                    modifier = Modifier
-                        .background(TierPickPrinting.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                    fontFamily = FontFamily.Monospace
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (isTorchOn) {
+                    Text(
+                        text = "TORCH",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TierPickPrinting,
+                        modifier = Modifier
+                            .background(TierPickPrinting.copy(alpha = 0.25f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 5.dp, vertical = 1.dp),
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+                if (useMock) {
+                    Text(
+                        text = "MOCK",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = LotusCyan,
+                        modifier = Modifier
+                            .background(LotusCyan.copy(alpha = 0.25f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 5.dp, vertical = 1.dp),
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
             }
         }
 
@@ -62,8 +77,16 @@ fun DiagnosticsOverlay(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             LockBadge(label = "AF LOCK", value = metadata.focusDistanceCm, locked = metadata.isAfLocked)
-            LockBadge(label = "SHUTTER", value = metadata.shutterSpeedFraction, locked = metadata.isAeLocked)
-            LockBadge(label = "ISO", value = "${metadata.isoSensitivity}", locked = metadata.isAeLocked)
+            LockBadge(
+                label = if (isAutoExposure) "AE AUTO" else "SHUTTER",
+                value = metadata.shutterSpeedFraction,
+                locked = !isAutoExposure
+            )
+            LockBadge(
+                label = "ISO",
+                value = "${metadata.isoSensitivity}",
+                locked = !isAutoExposure
+            )
             LockBadge(label = "FPS", value = String.format("%.0f", metadata.fps), locked = true)
         }
     }
@@ -76,7 +99,7 @@ private fun LockBadge(label: String, value: String, locked: Boolean) {
             Box(
                 modifier = Modifier
                     .size(6.dp)
-                    .background(if (locked) TierConfident else TierUnresolved, RoundedCornerShape(3.dp))
+                    .background(if (locked) TierConfident else TierProbable, RoundedCornerShape(3.dp))
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
