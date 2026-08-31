@@ -33,6 +33,7 @@ import com.decklotus.companion.ui.components.CameraPreviewView
 import com.decklotus.companion.ui.components.DiagnosticsOverlay
 import com.decklotus.companion.ui.components.ScanResultBadge
 import com.decklotus.companion.ui.components.SessionTrayBottomSheet
+import com.decklotus.companion.ui.components.UserProfilePickerDialog
 import com.decklotus.companion.ui.theme.LotusCyan
 import com.decklotus.companion.ui.theme.LotusPurple
 import com.decklotus.companion.ui.theme.TierConfident
@@ -56,6 +57,7 @@ fun CaptureScreen(
 
     var showDiagnostics by remember { mutableStateOf(false) }
     var isSessionTrayOpen by remember { mutableStateOf(false) }
+    var isProfilePickerOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(isSessionTrayOpen) {
         viewModel.setSessionTrayOpen(isSessionTrayOpen)
@@ -137,7 +139,7 @@ fun CaptureScreen(
             )
         }
 
-        // Top Status Header: Price Pill, Cradle Feed Indicator & User Target Pill
+        // Top Status Header: User Target Chip, Price Pill & Cradle Feed Indicator
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -146,10 +148,10 @@ fun CaptureScreen(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // User Target Chip (Tap to open session tray)
+            // User Target Chip (Tap to open user switcher dialog)
             Box(
                 modifier = Modifier
-                    .clickable { isSessionTrayOpen = true }
+                    .clickable { isProfilePickerOpen = true }
                     .background(Color(0xFF1E2633).copy(alpha = 0.95f), RoundedCornerShape(20.dp))
                     .border(1.dp, LotusPurple.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
                     .padding(horizontal = 10.dp, vertical = 6.dp)
@@ -162,6 +164,7 @@ fun CaptureScreen(
                         fontWeight = FontWeight.Bold,
                         color = Color.White
                     )
+                    Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = Color(0xFF8B949E), modifier = Modifier.size(14.dp))
                 }
             }
 
@@ -427,6 +430,17 @@ fun CaptureScreen(
                     )
                 }
             }
+        }
+
+        // Quick User Profile Switcher Dialog
+        if (isProfilePickerOpen) {
+            UserProfilePickerDialog(
+                activeProfile = settings.activeProfile,
+                profiles = settings.userProfiles,
+                onSelectProfile = { viewModel.selectActiveProfile(it) },
+                onOpenSettings = onNavigateToSettings,
+                onDismiss = { isProfilePickerOpen = false }
+            )
         }
 
         // Session Batch Tray Bottom Sheet

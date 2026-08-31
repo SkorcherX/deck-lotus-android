@@ -43,19 +43,20 @@ class SettingsRepository(private val context: Context) {
             emptyList()
         }
 
-        var activeId = prefs[Keys.ACTIVE_PROFILE_ID] ?: ""
-
-        // Auto-migration: if no profiles exist but legacy token is present, initialize default profile
-        if (profiles.isEmpty() && legacyToken.isNotBlank()) {
-            val defaultProfile = UserProfile(
-                name = "Primary User",
+        // Ensure legacy primary user profile is always preserved if not already in list
+        if (legacyToken.isNotBlank() && profiles.none { it.apiToken == legacyToken }) {
+            val primaryProfile = UserProfile(
+                id = "primary_account",
+                name = "My Account",
                 apiToken = legacyToken
             )
-            profiles = listOf(defaultProfile)
-            activeId = defaultProfile.id
+            profiles = listOf(primaryProfile) + profiles
         }
 
+        var activeId = prefs[Keys.ACTIVE_PROFILE_ID] ?: ""
         if (activeId.isBlank() && profiles.isNotEmpty()) {
+            activeId = profiles.first().id
+        } else if (profiles.none { it.id == activeId } && profiles.isNotEmpty()) {
             activeId = profiles.first().id
         }
 
@@ -81,7 +82,7 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             val legacyToken = prefs[Keys.API_TOKEN] ?: ""
             val profilesJson = prefs[Keys.USER_PROFILES_JSON]
-            val profiles: List<UserProfile> = try {
+            var profiles: List<UserProfile> = try {
                 if (!profilesJson.isNullOrBlank()) {
                     json.decodeFromString(profilesJson)
                 } else emptyList()
@@ -89,11 +90,25 @@ class SettingsRepository(private val context: Context) {
                 emptyList()
             }
 
+            if (legacyToken.isNotBlank() && profiles.none { it.apiToken == legacyToken }) {
+                val primaryProfile = UserProfile(
+                    id = "primary_account",
+                    name = "My Account",
+                    apiToken = legacyToken
+                )
+                profiles = listOf(primaryProfile) + profiles
+            }
+
+            var activeId = prefs[Keys.ACTIVE_PROFILE_ID] ?: ""
+            if (activeId.isBlank() && profiles.isNotEmpty()) {
+                activeId = profiles.first().id
+            }
+
             val current = AppSettings(
                 baseUrl = prefs[Keys.BASE_URL] ?: "http://192.168.1.100:3000",
                 apiToken = legacyToken,
                 userProfiles = profiles,
-                activeProfileId = prefs[Keys.ACTIVE_PROFILE_ID] ?: "",
+                activeProfileId = activeId,
                 useMockServer = prefs[Keys.USE_MOCK_SERVER] ?: true,
                 autoScanEnabled = prefs[Keys.AUTO_SCAN] ?: true,
                 soundFeedbackEnabled = prefs[Keys.SOUND_FEEDBACK] ?: true,
