@@ -25,11 +25,9 @@ sealed class ServerConnectionStatus {
 @Serializable
 data class CommitScanItem(
     val printingId: Int? = null,
-    val name: String? = null,
-    val setCode: String? = null,
-    val collectorNumber: String? = null,
     val quantity: Int = 1,
-    val isFoil: Boolean = false
+    val isFoil: Boolean = false,
+    val boardType: String = "mainboard"
 )
 
 @Serializable
@@ -154,6 +152,8 @@ class DeckLotusApiClient(
         )
 
         val bodyJson = json.encodeToString(CommitScanRequest.serializer(), payload)
+        Log.d("DeckLotusApiClient", "POST $url Payload: $bodyJson")
+
         val requestBody = bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType())
 
         val requestBuilder = Request.Builder()
@@ -173,6 +173,7 @@ class DeckLotusApiClient(
         try {
             client.newCall(requestBuilder.build()).execute().use { response ->
                 val bodyText = response.body?.string().orEmpty()
+                Log.d("DeckLotusApiClient", "POST $url Response (${response.code}): $bodyText")
                 if (response.isSuccessful) {
                     val parsed = json.decodeFromString(CommitScanResponse.serializer(), bodyText)
                     Result.success(parsed)
@@ -181,6 +182,7 @@ class DeckLotusApiClient(
                 }
             }
         } catch (e: Exception) {
+            Log.e("DeckLotusApiClient", "POST $url Exception: ${e.message}")
             Result.failure(e)
         }
     }

@@ -217,10 +217,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
             _uiState.update { it.copy(isCommitting = true) }
             val items = currentCards.map { card ->
                 CommitScanItem(
-                    printingId = if (card.printingId > 0) card.printingId else null,
-                    name = card.name,
-                    setCode = card.setCode,
-                    collectorNumber = card.collectorNumber,
+                    printingId = card.printingId,
                     quantity = card.quantity,
                     isFoil = card.isFoil
                 )

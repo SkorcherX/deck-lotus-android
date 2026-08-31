@@ -27,25 +27,24 @@ data class CardIdentity(
 class CardDatabaseHelper(private val context: Context) {
 
     private var db: SQLiteDatabase? = null
+    private val DB_VERSION = 3 // Bump to force refresh
 
     suspend fun openDatabase() = withContext(Dispatchers.IO) {
         if (db != null && db!!.isOpen) return@withContext
 
         val dbFile = File(context.filesDir, "card-identities.db")
-        val assetSize = try {
-            context.assets.openFd("card-identities.db").length
-        } catch (_: Exception) {
-            9_000_000L
-        }
+        val prefs = context.getSharedPreferences("card_db_prefs", Context.MODE_PRIVATE)
+        val installedVersion = prefs.getInt("installed_version", 0)
 
-        // Always ensure database matches latest asset version
-        if (!dbFile.exists() || dbFile.length() != assetSize) {
-            Log.d("CardDatabaseHelper", "Extracting fresh card-identities.db from assets...")
+        if (!dbFile.exists() || installedVersion < DB_VERSION) {
+            Log.d("CardDatabaseHelper", "Extracting fresh card-identities.db v$DB_VERSION from assets...")
+            if (dbFile.exists()) dbFile.delete()
             context.assets.open("card-identities.db").use { input ->
                 FileOutputStream(dbFile).use { output ->
                     input.copyTo(output)
                 }
             }
+            prefs.edit().putInt("installed_version", DB_VERSION).apply()
             Log.d("CardDatabaseHelper", "Extracted card-identities.db (${dbFile.length() / 1024} KB)")
         }
 
