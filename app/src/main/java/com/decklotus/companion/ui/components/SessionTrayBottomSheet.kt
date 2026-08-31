@@ -47,6 +47,8 @@ fun SessionTrayBottomSheet(
     onCommitToCollection: () -> Unit = {}
 ) {
     var showConfirmDialog by remember { mutableStateOf(false) }
+    var showDiscardDialog by remember { mutableStateOf(false) }
+    var showExportDialog by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -62,7 +64,7 @@ fun SessionTrayBottomSheet(
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 32.dp)
         ) {
-            // Header: Title + Clear Button
+            // Header: Title + Action Buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -85,13 +87,26 @@ fun SessionTrayBottomSheet(
                 }
 
                 if (cards.isNotEmpty()) {
-                    TextButton(
-                        onClick = onClearAll,
-                        colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFFF5252))
-                    ) {
-                        Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Clear All", fontSize = 13.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        // Quick Export Button
+                        TextButton(
+                            onClick = { showExportDialog = true },
+                            colors = ButtonDefaults.textButtonColors(contentColor = LotusCyan)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Export", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        // Quick Discard All Button
+                        TextButton(
+                            onClick = { showDiscardDialog = true },
+                            colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFF85149))
+                        ) {
+                            Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Discard", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -208,7 +223,7 @@ fun SessionTrayBottomSheet(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 340.dp),
+                        .heightIn(max = 300.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(cards, key = { it.id }) { item ->
@@ -224,12 +239,12 @@ fun SessionTrayBottomSheet(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Commit to Collection Button (Launches Confirmation Warning)
+                // Primary Action: Commit to Collection Button
                 Button(
                     onClick = { showConfirmDialog = true },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
+                        .height(50.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = TierConfident),
                     enabled = !isCommitting
@@ -246,6 +261,44 @@ fun SessionTrayBottomSheet(
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp
                         )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Secondary Row: [Export & Share] + [Discard All]
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Export / Share Button
+                    OutlinedButton(
+                        onClick = { showExportDialog = true },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = LotusCyan),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, LotusCyan.copy(alpha = 0.6f))
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Export / Share", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+
+                    // Discard All Button
+                    OutlinedButton(
+                        onClick = { showDiscardDialog = true },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFF85149)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF85149).copy(alpha = 0.6f))
+                    ) {
+                        Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Discard All", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
             }
@@ -265,6 +318,26 @@ fun SessionTrayBottomSheet(
                 onCommitToCollection()
             },
             onDismiss = { showConfirmDialog = false }
+        )
+    }
+
+    // Discard All Confirmation Dialog
+    if (showDiscardDialog) {
+        DiscardConfirmationDialog(
+            cardCount = totalCount,
+            onConfirmDiscard = {
+                showDiscardDialog = false
+                onClearAll()
+            },
+            onDismiss = { showDiscardDialog = false }
+        )
+    }
+
+    // Export & Share Dialog
+    if (showExportDialog) {
+        ExportBatchDialog(
+            cards = cards,
+            onDismiss = { showExportDialog = false }
         )
     }
 }
