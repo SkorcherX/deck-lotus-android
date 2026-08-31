@@ -67,39 +67,42 @@ object CollectorOcr {
         val maxBottom = allLinesWithBoxes.mapNotNull { it.box?.bottom }.maxOrNull() ?: 680
         val cardHeight = if (maxBottom > 100) maxBottom else 680
 
-        // 1. Top Zone (Top 28% of card): Card Title
-        val titleLines = allLinesWithBoxes.filter { item ->
+        // 1. Top Zone (Top 20% of card): Card Title only
+        val titleLinesWithBoxes = allLinesWithBoxes.filter { item ->
             val top = item.box?.top ?: 0
-            top < cardHeight * 0.28f
-        }.map { it.text }
+            top < cardHeight * 0.22f
+        }.sortedBy { it.box?.top ?: 0 }
 
-        val nameCandidate = titleLines.firstOrNull { line ->
+        val keywordExclusions = setOf(
+            "INSTANT", "SORCERY", "CREATURE", "ENCHANTMENT", "ARTIFACT", "PLANESWALKER", 
+            "BATTLE", "LAND", "LIFELINK", "FLYING", "HASTE", "VIGILANCE", "TRAMPLE", 
+            "DEATHTOUCH", "FLASH", "FIRST STRIKE", "WARD", "HEXPROOF", "DEFENDER", "REACH"
+        )
+
+        val nameCandidate = titleLinesWithBoxes.map { it.text }.firstOrNull { line ->
+            val upper = line.uppercase().trim()
             line.length >= 3 &&
             !line.startsWith("{") &&
             !line.contains("•") &&
             !line.contains("/") &&
             !line.all { it.isDigit() } &&
-            !line.startsWith("Instant", ignoreCase = true) &&
-            !line.startsWith("Sorcery", ignoreCase = true) &&
-            !line.startsWith("Creature", ignoreCase = true) &&
-            !line.startsWith("Enchantment", ignoreCase = true) &&
-            !line.startsWith("Artifact", ignoreCase = true) &&
-            !line.startsWith("Planeswalker", ignoreCase = true) &&
-            !line.startsWith("Battle", ignoreCase = true) &&
-            !line.startsWith("Land", ignoreCase = true)
-        } ?: allLinesWithBoxes.firstOrNull()?.text
+            keywordExclusions.none { upper.startsWith(it) }
+        } ?: allLinesWithBoxes.firstOrNull { line ->
+            val upper = line.text.uppercase().trim()
+            keywordExclusions.none { upper.startsWith(it) }
+        }?.text
 
         val cleanName = nameCandidate?.replace(Regex("""[0-9/\{\}]"""), "")?.trim()?.ifBlank { null }
 
-        // 2. Bottom Zone (Bottom 15% of card): Collector Block only
+        // 2. Bottom Zone (Bottom 10% of card): Collector Block only (Y >= 0.90)
         val collectorLinesWithBoxes = allLinesWithBoxes.filter { item ->
             val top = item.box?.top ?: cardHeight
-            top >= cardHeight * 0.84f
+            top >= cardHeight * 0.90f
         }
 
         val collectorLines = collectorLinesWithBoxes.map { it.text }
         val effectiveCollectorLines = collectorLines.ifEmpty { 
-            allLinesWithBoxes.filter { (it.box?.top ?: 0) >= cardHeight * 0.78f }.map { it.text } 
+            allLinesWithBoxes.filter { (it.box?.top ?: 0) >= cardHeight * 0.85f }.map { it.text } 
         }
         val parsedCollector = parseRawCollectorLines(effectiveCollectorLines)
 
