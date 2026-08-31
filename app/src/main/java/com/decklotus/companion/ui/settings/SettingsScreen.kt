@@ -133,6 +133,24 @@ fun SettingsScreen(
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    // Auto Focus Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Auto-Focus (AF)", fontWeight = FontWeight.Medium)
+                            Text("Enable for handheld testing; disable to lock fixed focal distance in cradle", fontSize = 12.sp, color = TextSecondary)
+                        }
+                        Switch(
+                            checked = settings.autoFocus,
+                            onCheckedChange = { checked ->
+                                viewModel.updateSettings { it.copy(autoFocus = checked) }
+                            }
+                        )
+                    }
+
                     // Auto Exposure Toggle
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -224,17 +242,17 @@ fun SettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Fixed Focal Distance (AF Locked)", fontWeight = FontWeight.Medium)
+                            Text("Fixed Focal Distance", fontWeight = FontWeight.Medium)
                             Text("~${approxCm}cm (${String.format("%.1f", currentDpt)} dpt)", color = LotusCyan, fontWeight = FontWeight.Bold)
                         }
-                        Text("Calibrated for Card Slinger 3.0 cradle distance", fontSize = 12.sp, color = TextSecondary)
+                        Text(if (settings.autoFocus) "Inactive while Auto-Focus is ON" else "Calibrated for Card Slinger 3.0 cradle distance", fontSize = 12.sp, color = TextSecondary)
                         Slider(
                             value = currentDpt,
                             onValueChange = { dpt ->
-                                viewModel.updateSettings { it.copy(focusDistanceDiopters = dpt) }
+                                viewModel.updateSettings { it.copy(focusDistanceDiopters = dpt, autoFocus = false) }
                             },
-                            valueRange = 1.0f..10.0f,
-                            steps = 18,
+                            valueRange = 1.0f..12.0f,
+                            steps = 22,
                             colors = SliderDefaults.colors(
                                 thumbColor = LotusPurple,
                                 activeTrackColor = LotusPurple

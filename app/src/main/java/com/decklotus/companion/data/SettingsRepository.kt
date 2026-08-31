@@ -15,6 +15,7 @@ class SettingsRepository(private val context: Context) {
         val BASE_URL = stringPreferencesKey("base_url")
         val API_TOKEN = stringPreferencesKey("api_token")
         val USE_MOCK_SERVER = booleanPreferencesKey("use_mock_server")
+        val AUTO_FOCUS = booleanPreferencesKey("auto_focus")
         val AUTO_EXPOSURE = booleanPreferencesKey("auto_exposure")
         val TORCH_ENABLED = booleanPreferencesKey("torch_enabled")
         val EXPOSURE_NS = longPreferencesKey("exposure_ns")
@@ -28,11 +29,12 @@ class SettingsRepository(private val context: Context) {
             baseUrl = prefs[Keys.BASE_URL] ?: "http://192.168.1.100:3000",
             apiToken = prefs[Keys.API_TOKEN] ?: "",
             useMockServer = prefs[Keys.USE_MOCK_SERVER] ?: true,
+            autoFocus = prefs[Keys.AUTO_FOCUS] ?: true,
             autoExposure = prefs[Keys.AUTO_EXPOSURE] ?: true,
             torchEnabled = prefs[Keys.TORCH_ENABLED] ?: false,
-            exposureTimeNs = prefs[Keys.EXPOSURE_NS] ?: 8_000_000L,
-            isoSensitivity = prefs[Keys.ISO] ?: 800,
-            focusDistanceDiopters = prefs[Keys.FOCUS_DIST] ?: 4.5f,
+            exposureTimeNs = prefs[Keys.EXPOSURE_NS] ?: 2_000_000L,
+            isoSensitivity = prefs[Keys.ISO] ?: 400,
+            focusDistanceDiopters = prefs[Keys.FOCUS_DIST] ?: 6.5f,
             pinnedPhysicalCameraId = prefs[Keys.PINNED_CAMERA_ID] ?: ""
         )
     }
@@ -43,17 +45,19 @@ class SettingsRepository(private val context: Context) {
                 baseUrl = prefs[Keys.BASE_URL] ?: "http://192.168.1.100:3000",
                 apiToken = prefs[Keys.API_TOKEN] ?: "",
                 useMockServer = prefs[Keys.USE_MOCK_SERVER] ?: true,
+                autoFocus = prefs[Keys.AUTO_FOCUS] ?: true,
                 autoExposure = prefs[Keys.AUTO_EXPOSURE] ?: true,
                 torchEnabled = prefs[Keys.TORCH_ENABLED] ?: false,
-                exposureTimeNs = prefs[Keys.EXPOSURE_NS] ?: 8_000_000L,
-                isoSensitivity = prefs[Keys.ISO] ?: 800,
-                focusDistanceDiopters = prefs[Keys.FOCUS_DIST] ?: 4.5f,
+                exposureTimeNs = prefs[Keys.EXPOSURE_NS] ?: 2_000_000L,
+                isoSensitivity = prefs[Keys.ISO] ?: 400,
+                focusDistanceDiopters = prefs[Keys.FOCUS_DIST] ?: 6.5f,
                 pinnedPhysicalCameraId = prefs[Keys.PINNED_CAMERA_ID] ?: ""
             )
             val updated = transform(current)
             prefs[Keys.BASE_URL] = updated.baseUrl
             prefs[Keys.API_TOKEN] = updated.apiToken
             prefs[Keys.USE_MOCK_SERVER] = updated.useMockServer
+            prefs[Keys.AUTO_FOCUS] = updated.autoFocus
             prefs[Keys.AUTO_EXPOSURE] = updated.autoExposure
             prefs[Keys.TORCH_ENABLED] = updated.torchEnabled
             prefs[Keys.EXPOSURE_NS] = updated.exposureTimeNs

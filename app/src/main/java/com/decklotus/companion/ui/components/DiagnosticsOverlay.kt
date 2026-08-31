@@ -18,6 +18,7 @@ import com.decklotus.companion.ui.theme.*
 fun DiagnosticsOverlay(
     metadata: LiveCaptureMetadata,
     useMock: Boolean,
+    isAutoFocus: Boolean,
     isAutoExposure: Boolean,
     isTorchOn: Boolean,
     modifier: Modifier = Modifier
@@ -25,9 +26,9 @@ fun DiagnosticsOverlay(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(horizontal = 4.dp, vertical = 2.dp)
             .background(SurfaceDark.copy(alpha = 0.85f), RoundedCornerShape(12.dp))
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -35,7 +36,7 @@ fun DiagnosticsOverlay(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "RIG: Pixel 10 Pro + Slinger 3.0",
+                text = "Pixel 10 Pro + Slinger",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = LotusPurple,
@@ -51,7 +52,7 @@ fun DiagnosticsOverlay(
                         color = TierPickPrinting,
                         modifier = Modifier
                             .background(TierPickPrinting.copy(alpha = 0.25f), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 5.dp, vertical = 1.dp),
+                            .padding(horizontal = 4.dp, vertical = 1.dp),
                         fontFamily = FontFamily.Monospace
                     )
                 }
@@ -63,7 +64,7 @@ fun DiagnosticsOverlay(
                         color = LotusCyan,
                         modifier = Modifier
                             .background(LotusCyan.copy(alpha = 0.25f), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 5.dp, vertical = 1.dp),
+                            .padding(horizontal = 4.dp, vertical = 1.dp),
                         fontFamily = FontFamily.Monospace
                     )
                 }
@@ -76,7 +77,11 @@ fun DiagnosticsOverlay(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            LockBadge(label = "AF LOCK", value = metadata.focusDistanceCm, locked = metadata.isAfLocked)
+            LockBadge(
+                label = if (isAutoFocus) "AF AUTO" else "AF LOCK",
+                value = metadata.focusDistanceCm,
+                locked = !isAutoFocus
+            )
             LockBadge(
                 label = if (isAutoExposure) "AE AUTO" else "SHUTTER",
                 value = metadata.shutterSpeedFraction,

@@ -77,6 +77,12 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+        fun toggleAutoFocus() {
+        viewModelScope.launch {
+            settingsRepo.updateSettings { it.copy(autoFocus = !it.autoFocus) }
+        }
+    }
+
     fun toggleAutoExposure() {
         viewModelScope.launch {
             settingsRepo.updateSettings { it.copy(autoExposure = !it.autoExposure) }

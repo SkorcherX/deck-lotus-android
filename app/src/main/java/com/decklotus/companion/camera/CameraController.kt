@@ -11,24 +11,20 @@ import android.hardware.camera2.TotalCaptureResult
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.CaptureRequestOptions
-import androidx.camera.core.Camera
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.ImageProxy
-import androidx.camera.core.Preview
+import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.decklotus.companion.data.AppSettings
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import java.util.concurrent.Executor
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -36,7 +32,7 @@ class CameraController(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner
 ) {
-    private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val mainExecutor: Executor = ContextCompat.getMainExecutor(context)
     private var cameraProvider: ProcessCameraProvider? = null
     private var imageCapture: ImageCapture? = null
     private var camera: Camera? = null
@@ -128,24 +124,29 @@ class CameraController(
             } catch (e: Exception) {
                 e.printStackTrace()
             }
-        }, ContextCompat.getMainExecutor(context))
+        }, mainExecutor)
     }
 
     private fun applyManualControls(
         extender: Camera2Interop.Extender<*>,
         settings: AppSettings
     ) {
-        // AF Control: fixed focus distance
-        extender.setCaptureRequestOption(
-            CaptureRequest.CONTROL_AF_MODE,
-            CaptureRequest.CONTROL_AF_MODE_OFF
-        )
-        extender.setCaptureRequestOption(
-            CaptureRequest.LENS_FOCUS_DISTANCE,
-            settings.focusDistanceDiopters
-        )
+        if (settings.autoFocus) {
+            extender.setCaptureRequestOption(
+                CaptureRequest.CONTROL_AF_MODE,
+                CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+            )
+        } else {
+            extender.setCaptureRequestOption(
+                CaptureRequest.CONTROL_AF_MODE,
+                CaptureRequest.CONTROL_AF_MODE_OFF
+            )
+            extender.setCaptureRequestOption(
+                CaptureRequest.LENS_FOCUS_DISTANCE,
+                settings.focusDistanceDiopters
+            )
+        }
 
-        // AE Control: Auto or Manual
         if (settings.autoExposure) {
             extender.setCaptureRequestOption(
                 CaptureRequest.CONTROL_AE_MODE,
@@ -176,9 +177,14 @@ class CameraController(
         val cam = camera ?: return
         val control = Camera2CameraControl.from(cam.cameraControl)
         val builder = CaptureRequestOptions.Builder()
-            .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
-            .setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, settings.focusDistanceDiopters)
             .setCaptureRequestOption(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_FAST)
+
+        if (settings.autoFocus) {
+            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+        } else {
+            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+            builder.setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, settings.focusDistanceDiopters)
+        }
 
         if (settings.autoExposure) {
             builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
@@ -192,26 +198,31 @@ class CameraController(
         cam.cameraControl.enableTorch(settings.torchEnabled)
     }
 
-    suspend fun takePictureBitmap(): Bitmap = suspendCancellableCoroutine { continuation ->
-        val capture = imageCapture ?: run {
-            continuation.resumeWithException(IllegalStateException("ImageCapture not bound"))
-            return@suspendCancellableCoroutine
+    suspend fun takePictureBitmap(): Bitmap {
+        val capture = imageCapture ?: throw IllegalStateException("ImageCapture not bound")
+
+        val proxy = suspendCancellableCoroutine<ImageProxy> { continuation ->
+            capture.takePicture(
+                mainExecutor,
+                object : ImageCapture.OnImageCapturedCallback() {
+                    override fun onCaptureSuccess(image: ImageProxy) {
+                        continuation.resume(image)
+                    }
+
+                    override fun onError(exception: ImageCaptureException) {
+                        continuation.resumeWithException(exception)
+                    }
+                }
+            )
         }
 
-        capture.takePicture(
-            cameraExecutor,
-            object : ImageCapture.OnImageCapturedCallback() {
-                override fun onCaptureSuccess(image: ImageProxy) {
-                    val bitmap = imageProxyToBitmap(image)
-                    image.close()
-                    continuation.resume(bitmap)
-                }
-
-                override fun onError(exception: ImageCaptureException) {
-                    continuation.resumeWithException(exception)
-                }
+        return withContext(Dispatchers.Default) {
+            try {
+                imageProxyToBitmap(proxy)
+            } finally {
+                proxy.close()
             }
-        )
+        }
     }
 
     private fun imageProxyToBitmap(image: ImageProxy): Bitmap {
@@ -233,6 +244,7 @@ class CameraController(
 
     fun shutdown() {
         cameraProvider?.unbindAll()
-        cameraExecutor.shutdown()
+        camera = null
+        imageCapture = null
     }
 }

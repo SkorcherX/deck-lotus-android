@@ -61,12 +61,20 @@ fun CaptureScreen(
     val cameraController = remember { CameraController(context, lifecycleOwner) }
     val liveMeta by cameraController.liveMetadata.collectAsState()
 
-    DisposableEffect(hasCameraPermission, settings) {
+    // Bind camera once when permission is available
+    DisposableEffect(hasCameraPermission) {
         if (hasCameraPermission) {
             cameraController.bindCamera(previewView, settings)
         }
         onDispose {
             cameraController.shutdown()
+        }
+    }
+
+    // Reactively update manual controls when settings change without unbinding camera
+    LaunchedEffect(settings) {
+        if (hasCameraPermission) {
+            cameraController.updateManualControls(settings)
         }
     }
 
@@ -99,23 +107,21 @@ fun CaptureScreen(
                 DiagnosticsOverlay(
                     metadata = liveMeta,
                     useMock = settings.useMockServer,
+                    isAutoFocus = settings.autoFocus,
                     isAutoExposure = settings.autoExposure,
                     isTorchOn = settings.torchEnabled,
                     modifier = Modifier.weight(1f)
                 )
 
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier.padding(start = 4.dp)
                 ) {
                     // Torch Quick Toggle
                     IconButton(
-                        onClick = {
-                            viewModel.toggleTorch()
-                            cameraController.updateManualControls(settings.copy(torchEnabled = !settings.torchEnabled))
-                        },
+                        onClick = { viewModel.toggleTorch() },
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(34.dp)
                             .background(
                                 if (settings.torchEnabled) TierPickPrinting else Color.Black.copy(alpha = 0.6f),
                                 CircleShape
@@ -125,18 +131,33 @@ fun CaptureScreen(
                             if (settings.torchEnabled) Icons.Default.FlashOn else Icons.Default.FlashOff,
                             contentDescription = "Torch",
                             tint = if (settings.torchEnabled) Color.Black else Color.White,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    // AF vs Fixed Lock Quick Toggle
+                    IconButton(
+                        onClick = { viewModel.toggleAutoFocus() },
+                        modifier = Modifier
+                            .size(34.dp)
+                            .background(
+                                if (settings.autoFocus) LotusPurple else Color.Black.copy(alpha = 0.6f),
+                                CircleShape
+                            )
+                    ) {
+                        Icon(
+                            if (settings.autoFocus) Icons.Default.CenterFocusStrong else Icons.Default.CenterFocusWeak,
+                            contentDescription = "Focus Mode",
+                            tint = if (settings.autoFocus) Color.Black else Color.White,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
 
                     // AE vs Rig Lock Quick Toggle
                     IconButton(
-                        onClick = {
-                            viewModel.toggleAutoExposure()
-                            cameraController.updateManualControls(settings.copy(autoExposure = !settings.autoExposure))
-                        },
+                        onClick = { viewModel.toggleAutoExposure() },
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(34.dp)
                             .background(
                                 if (settings.autoExposure) LotusCyan else Color.Black.copy(alpha = 0.6f),
                                 CircleShape
@@ -146,7 +167,7 @@ fun CaptureScreen(
                             if (settings.autoExposure) Icons.Default.BrightnessAuto else Icons.Default.Lock,
                             contentDescription = "AE Mode",
                             tint = if (settings.autoExposure) Color.Black else Color.White,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
 
@@ -154,10 +175,10 @@ fun CaptureScreen(
                     IconButton(
                         onClick = onNavigateToSettings,
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(34.dp)
                             .background(Color.Black.copy(alpha = 0.6f), CircleShape)
                     ) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White, modifier = Modifier.size(18.dp))
                     }
                 }
             }
