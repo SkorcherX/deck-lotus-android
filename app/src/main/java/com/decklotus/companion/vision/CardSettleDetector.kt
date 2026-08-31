@@ -2,6 +2,7 @@ package com.decklotus.companion.vision
 
 import android.graphics.Bitmap
 import kotlin.math.abs
+import kotlin.math.sqrt
 
 enum class SettleState {
     WAITING_FOR_CARD,
@@ -12,13 +13,14 @@ enum class SettleState {
 }
 
 /**
- * High-speed motion and settle detector for human-fed gravity cradles.
- * Monitors consecutive preview frames at 30+ FPS with minimal CPU cost (< 1ms per frame).
+ * High-speed motion, presence, and settle detector for human-fed gravity cradles.
+ * Monitors consecutive preview frames at 30+ FPS (<1ms CPU overhead).
  */
 class CardSettleDetector(
-    private val motionThreshold: Float = 14.0f,
+    private val motionThreshold: Float = 15.0f,
     private val settleThreshold: Float = 4.5f,
-    private val settleDurationMs: Long = 100L
+    private val settleDurationMs: Long = 120L,
+    private val minCardContrastStdDev: Float = 12.0f // Minimum luma standard deviation for card presence
 ) {
     var state: SettleState = SettleState.WAITING_FOR_CARD
         private set
@@ -46,13 +48,16 @@ class CardSettleDetector(
             return false
         }
 
-        // Calculate Mean Absolute Difference (MAD)
+        // 1. Calculate Mean Absolute Difference (MAD)
         var totalDiff = 0.0f
         val len = currentGrid.size
         for (i in 0 until len) {
             totalDiff += abs(currentGrid[i] - prev[i])
         }
         val mad = totalDiff / len
+
+        // 2. Check if a card is physically present based on content variance
+        val hasCardContent = calculateContrastStdDev(currentGrid) >= minCardContrastStdDev
 
         when (state) {
             SettleState.WAITING_FOR_CARD -> {
@@ -63,14 +68,21 @@ class CardSettleDetector(
 
             SettleState.CARD_MOVING -> {
                 if (mad <= settleThreshold) {
-                    state = SettleState.CARD_SETTLING
-                    settleStartTime = currentTimeMs
+                    if (hasCardContent) {
+                        state = SettleState.CARD_SETTLING
+                        settleStartTime = currentTimeMs
+                    } else {
+                        // Stationary but no card in cradle (empty table)
+                        state = SettleState.WAITING_FOR_CARD
+                    }
                 }
             }
 
             SettleState.CARD_SETTLING -> {
                 if (mad > settleThreshold) {
                     state = SettleState.CARD_MOVING
+                } else if (!hasCardContent) {
+                    state = SettleState.WAITING_FOR_CARD
                 } else if (currentTimeMs - settleStartTime >= settleDurationMs) {
                     state = SettleState.CARD_SETTLED
                     return true
@@ -78,10 +90,11 @@ class CardSettleDetector(
             }
 
             SettleState.CARD_SETTLED -> {
-                // Stay settled until marked locked
+                // Wait for capture callback to mark as locked
             }
 
             SettleState.LOCKED_AFTER_SCAN -> {
+                // Must see significant motion (old card removed or new card dropped) before re-arming
                 if (mad > motionThreshold * 1.2f) {
                     state = SettleState.CARD_MOVING
                 }
@@ -89,6 +102,25 @@ class CardSettleDetector(
         }
 
         return false
+    }
+
+    /**
+     * Calculate luma standard deviation across the sampled grid.
+     */
+    fun calculateContrastStdDev(grid: FloatArray): Float {
+        var sum = 0.0f
+        val len = grid.size
+        for (i in 0 until len) {
+            sum += grid[i]
+        }
+        val mean = sum / len
+
+        var varianceSum = 0.0f
+        for (i in 0 until len) {
+            val diff = grid[i] - mean
+            varianceSum += diff * diff
+        }
+        return sqrt(varianceSum / len)
     }
 
     /**

@@ -30,17 +30,32 @@ class MockIngestServer(
                     val body = request.body.readUtf8()
                     return try {
                         val req = json.decodeFromString(IngestRequest.serializer(), body)
-                        val set = req.ocr.setCode ?: "WOE"
-                        val collector = req.ocr.collector ?: "0045"
+                        val ocrName = req.ocr.name?.ifBlank { null }
+                        val set = req.ocr.setCode?.ifBlank { null }
+                        val collector = req.ocr.collector?.ifBlank { null }
                         val isFoil = req.ocr.rawLines.any { it.contains("★") }
 
-                        val resolvedName = req.ocr.name?.ifBlank { null }
+                        // If no card text was detected at all, return unresolved
+                        if (ocrName == null && set == null && collector == null && req.ocr.confidence < 0.2f) {
+                            val emptyResponse = IngestResponse(
+                                tier = "unresolved",
+                                printing = null,
+                                committed = false,
+                                error = "No card detected"
+                            )
+                            return MockResponse()
+                                .setResponseCode(200)
+                                .setHeader("Content-Type", "application/json")
+                                .setBody(json.encodeToString(IngestResponse.serializer(), emptyResponse))
+                        }
+
+                        val resolvedName = ocrName
                             ?: when (set) {
                                 "WOE", "SPG", "SOA" -> "Monstrous Rage"
                                 "ECC" -> "Cultivate"
                                 "MH3" -> "Wrath of the Skies"
                                 "FDN" -> "Llanowar Elves"
-                                else -> "Monstrous Rage"
+                                else -> if (set != null && collector != null) "Card ($set #$collector)" else "Recognized Card"
                             }
 
                         val response = IngestResponse(
@@ -48,8 +63,8 @@ class MockIngestServer(
                             printing = IngestResolvedPrinting(
                                 uuid = UUID.randomUUID().toString(),
                                 name = resolvedName,
-                                setCode = set,
-                                collector = collector,
+                                setCode = set ?: "WOE",
+                                collector = collector ?: "0045",
                                 isFoil = isFoil,
                                 marketPriceUsd = 0.26
                             ),

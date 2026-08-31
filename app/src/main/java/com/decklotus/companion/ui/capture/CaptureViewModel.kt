@@ -234,7 +234,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     totalMs = totalMs
                 )
 
-                if (netResult.response != null) {
+                if (netResult.response != null && netResult.response.printing != null && netResult.response.tier != "unresolved") {
                     val isConfident = netResult.response.tier == "confident"
                     triggerHaptic(isConfident)
                     if (settings.soundFeedbackEnabled) {
@@ -254,14 +254,15 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                         )
                     }
                 } else {
-                    triggerHaptic(isSuccess = false)
-                    if (settings.soundFeedbackEnabled) soundFeedback.playErrorTone()
-                    settleDetector.markCaptured()
-
+                    if (!isAutoTriggered) {
+                        triggerHaptic(isSuccess = false)
+                        if (settings.soundFeedbackEnabled) soundFeedback.playErrorTone()
+                    }
                     _uiState.update {
                         it.copy(
                             isCapturing = false,
-                            lastError = netResult.errorMessage ?: "Network request failed",
+                            lastResponse = netResult.response,
+                            lastError = netResult.response?.error ?: netResult.errorMessage,
                             lastTimings = timings,
                             cradleState = SettleState.WAITING_FOR_CARD
                         )

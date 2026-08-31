@@ -12,14 +12,17 @@ class CardSettleDetectorTest {
         val detector = CardSettleDetector(
             motionThreshold = 10.0f,
             settleThreshold = 3.0f,
-            settleDurationMs = 100L
+            settleDurationMs = 100L,
+            minCardContrastStdDev = 10.0f
         )
 
         assertEquals(SettleState.WAITING_FOR_CARD, detector.state)
 
+        // Empty cradle: flat uniform luma (low stdDev)
         val emptyGrid = FloatArray(256) { 50.0f }
-        val cardMotionGrid = FloatArray(256) { 180.0f }
-        val cardSettledGrid = FloatArray(256) { 181.0f } // Low variance between stationary frames
+        // Card: high contrast black border + bright art/text (high stdDev)
+        val cardMotionGrid = FloatArray(256) { if (it % 2 == 0) 220.0f else 20.0f }
+        val cardSettledGrid = FloatArray(256) { if (it % 2 == 0) 221.0f else 21.0f }
 
         // Frame 1: empty cradle baseline
         var triggered = detector.processLumaGrid(emptyGrid, 1000L)
@@ -56,7 +59,7 @@ class CardSettleDetectorTest {
         assertEquals(SettleState.LOCKED_AFTER_SCAN, detector.state)
 
         // Frame 6: new card dropped (motion delta again!)
-        val nextCardMotionGrid = FloatArray(256) { 90.0f }
+        val nextCardMotionGrid = FloatArray(256) { if (it % 3 == 0) 200.0f else 40.0f }
         triggered = detector.processLumaGrid(nextCardMotionGrid, 1300L)
         assertFalse(triggered)
         assertEquals(SettleState.CARD_MOVING, detector.state)

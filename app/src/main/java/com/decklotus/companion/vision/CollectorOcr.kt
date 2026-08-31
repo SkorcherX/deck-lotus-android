@@ -32,9 +32,6 @@ object CollectorOcr {
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
 
-    /**
-     * Crop the collector region (bottom-left) from a rectified card bitmap.
-     */
     fun cropCollectorRegion(rectifiedCard: Bitmap): Bitmap {
         val width = rectifiedCard.width
         val height = rectifiedCard.height
@@ -47,9 +44,6 @@ object CollectorOcr {
         return Bitmap.createBitmap(rectifiedCard, x0, y0, max(1, cw), max(1, ch))
     }
 
-    /**
-     * Crop the card name/title header region (top) from a rectified card bitmap.
-     */
     fun cropTitleRegion(rectifiedCard: Bitmap): Bitmap {
         val width = rectifiedCard.width
         val height = rectifiedCard.height
@@ -62,9 +56,6 @@ object CollectorOcr {
         return Bitmap.createBitmap(rectifiedCard, x0, y0, max(1, cw), max(1, ch))
     }
 
-    /**
-     * Run ML Kit Text Recognition asynchronously on the provided bitmap.
-     */
     suspend fun recognizeText(bitmap: Bitmap): Text = suspendCancellableCoroutine { continuation ->
         val inputImage = InputImage.fromBitmap(bitmap, 0)
         recognizer.process(inputImage)
@@ -76,9 +67,6 @@ object CollectorOcr {
             }
     }
 
-    /**
-     * Parse full card OCR by combining title recognition and collector block recognition.
-     */
     fun parseFullCardOcr(
         titleText: Text,
         collectorText: Text,
@@ -88,13 +76,25 @@ object CollectorOcr {
         val collectorLines = collectorText.textBlocks.flatMap { it.lines.map { l -> l.text.trim() } }.filter { it.isNotBlank() }
         val allLines = (titleLines + collectorLines + (fullImageText?.textBlocks?.flatMap { it.lines.map { l -> l.text.trim() } } ?: emptyList())).distinct()
 
+        if (allLines.isEmpty()) {
+            return ParsedCardOcr()
+        }
+
         // Extract card name from the title header lines
         val rawName = titleLines.firstOrNull { it.length >= 3 && !it.startsWith("{") && !it.all { c -> c.isDigit() } }
             ?: allLines.firstOrNull { it.length >= 3 && !it.contains("•") && !it.contains("/") && !it.all { c -> c.isDigit() } }
 
-        val cleanName = rawName?.replace(Regex("""[0-9/\{\}]"""), "")?.trim()
+        val cleanName = rawName?.replace(Regex("""[0-9/\{\}]"""), "")?.trim()?.ifBlank { null }
 
         val parsedCollector = parseRawCollectorLines(collectorLines.ifEmpty { allLines })
+
+        val hasValidData = cleanName != null || parsedCollector.collectorNumber != null || parsedCollector.setCode != null
+        val confidence = when {
+            cleanName != null && parsedCollector.collectorNumber != null -> 0.95f
+            cleanName != null || parsedCollector.collectorNumber != null -> 0.70f
+            hasValidData -> 0.40f
+            else -> 0.0f
+        }
 
         return ParsedCardOcr(
             name = cleanName,
@@ -103,13 +103,10 @@ object CollectorOcr {
             language = parsedCollector.language,
             isFoil = parsedCollector.isFoil,
             rawLines = allLines,
-            confidence = if (cleanName != null && parsedCollector.collectorNumber != null) 0.95f else 0.70f
+            confidence = confidence
         )
     }
 
-    /**
-     * Parse collector block strings.
-     */
     fun parseRawCollectorLines(lines: List<String>): ParsedCardOcr {
         if (lines.isEmpty()) return ParsedCardOcr()
 
@@ -145,7 +142,6 @@ object CollectorOcr {
             }
         }
 
-        // Combined fallback: e.g. "WOE 0045" or "ECC 0001" or "SOA EN"
         if (setCode == null || collectorNumber == null) {
             val combinedRegex = Regex("""\b([A-Za-z0-9]{3,5})\s+([A-Za-z0-9★†-]*\d[A-Za-z0-9★†-]*)\b""")
             for (line in lines) {
