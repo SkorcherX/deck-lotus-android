@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -96,13 +97,13 @@ fun SessionTrayBottomSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 SummaryStatCard(
-                    title = "EST. VALUE",
+                    title = "BATCH VALUE",
                     value = String.format("$%.2f", totalValueUsd),
                     accentColor = Color(0xFF2EA043),
                     modifier = Modifier.weight(1.3f)
                 )
                 SummaryStatCard(
-                    title = "COUNT",
+                    title = "CARDS",
                     value = "$totalCount",
                     accentColor = LotusCyan,
                     modifier = Modifier.weight(0.85f)
@@ -149,7 +150,7 @@ fun SessionTrayBottomSheet(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 420.dp),
+                        .heightIn(max = 440.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(cards, key = { it.id }) { item ->
@@ -206,6 +207,10 @@ private fun ScannedCardRowItem(
     onToggleFoil: () -> Unit,
     onRemove: () -> Unit
 ) {
+    val imgBitmap = remember(item.id, item.thumbnail) {
+        item.thumbnail?.asImageBitmap()
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -215,9 +220,9 @@ private fun ScannedCardRowItem(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Thumbnail
-        if (item.thumbnail != null) {
+        if (imgBitmap != null) {
             Image(
-                bitmap = item.thumbnail.asImageBitmap(),
+                bitmap = imgBitmap,
                 contentDescription = null,
                 modifier = Modifier
                     .size(width = 38.dp, height = 54.dp)

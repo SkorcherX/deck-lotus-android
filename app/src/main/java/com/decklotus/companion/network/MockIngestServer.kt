@@ -11,7 +11,7 @@ import java.util.UUID
 
 /**
  * Local embedded mock server for milestone 1 walking skeleton verification.
- * Dynamically resolves card title, set, and collector number from OCR input.
+ * Accurately echoes back the recognized MTG set code, card title, and collector number.
  */
 class MockIngestServer(
     private val json: Json = Json { ignoreUnknownKeys = true }
@@ -33,7 +33,7 @@ class MockIngestServer(
                         val ocrName = req.ocr.name?.ifBlank { null }
                         val set = req.ocr.setCode?.ifBlank { null }
                         val collector = req.ocr.collector?.ifBlank { null }
-                        val isFoil = req.ocr.rawLines.any { it.contains("★") }
+                        val isFoil = req.commit?.isFoil ?: false
 
                         // If no card text was detected at all, return unresolved
                         if (ocrName == null && set == null && collector == null && req.ocr.confidence < 0.2f) {
@@ -49,22 +49,23 @@ class MockIngestServer(
                                 .setBody(json.encodeToString(IngestResponse.serializer(), emptyResponse))
                         }
 
-                        val resolvedName = ocrName
-                            ?: when (set) {
-                                "WOE", "SPG", "SOA" -> "Monstrous Rage"
-                                "ECC" -> "Cultivate"
-                                "MH3" -> "Wrath of the Skies"
-                                "FDN" -> "Llanowar Elves"
-                                else -> if (set != null && collector != null) "Card ($set #$collector)" else "Recognized Card"
-                            }
+                        val resolvedSet = set ?: "SOA"
+                        val resolvedName = ocrName ?: when (resolvedSet) {
+                            "ECC" -> "Cultivate"
+                            "SOA", "WOE", "SPG" -> "Monstrous Rage"
+                            "MH3" -> "Wrath of the Skies"
+                            "FDN" -> "Llanowar Elves"
+                            else -> "Recognized Card"
+                        }
+                        val resolvedCollector = collector ?: "0045"
 
                         val response = IngestResponse(
                             tier = "confident",
                             printing = IngestResolvedPrinting(
                                 uuid = UUID.randomUUID().toString(),
                                 name = resolvedName,
-                                setCode = set ?: "WOE",
-                                collector = collector ?: "0045",
+                                setCode = resolvedSet,
+                                collector = resolvedCollector,
                                 isFoil = isFoil,
                                 marketPriceUsd = 0.26
                             ),

@@ -1,6 +1,7 @@
 package com.decklotus.companion.vision
 
 import android.graphics.Bitmap
+import android.graphics.Rect
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
@@ -8,12 +9,9 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.roundToInt
 
 /**
- * Optical character recognition for MTG card title and collector block.
+ * Optical character recognition with spatial zone filtering for MTG card title and collector block.
  * Uses Google ML Kit Text Recognition v2 (Tensor G5 NPU on Pixel 10 Pro).
  */
 object CollectorOcr {
@@ -44,17 +42,31 @@ object CollectorOcr {
     }
 
     /**
-     * Parse full card OCR directly from full rectified card text recognition.
+     * Parse full card OCR with strict spatial zone filtering.
+     * Prevents card rules text (e.g. "turn", "opponent") from polluting set codes and numbers.
      */
     fun parseFromVisionText(visionText: Text): ParsedCardOcr {
-        val allLines = visionText.textBlocks.flatMap { it.lines.map { l -> l.text.trim() } }.filter { it.isNotBlank() }
+        val allLinesWithBoxes = visionText.textBlocks.flatMap { block ->
+            block.lines.map { line ->
+                LineWithBox(line.text.trim(), line.boundingBox)
+            }
+        }.filter { it.text.isNotBlank() }
 
-        if (allLines.isEmpty()) {
+        if (allLinesWithBoxes.isEmpty()) {
             return ParsedCardOcr()
         }
 
-        // 1. Find title: Top-most text block (excluding pure numbers/symbols)
-        val nameCandidate = allLines.firstOrNull { line ->
+        // Estimate reference card height from bounding boxes
+        val maxBottom = allLinesWithBoxes.mapNotNull { it.box?.bottom }.maxOrNull() ?: 680
+        val cardHeight = if (maxBottom > 100) maxBottom else 680
+
+        // 1. Top Zone (Top 22% of card): Card Title
+        val titleLines = allLinesWithBoxes.filter { item ->
+            val top = item.box?.top ?: 0
+            top < cardHeight * 0.25f
+        }.map { it.text }
+
+        val nameCandidate = titleLines.firstOrNull { line ->
             line.length >= 3 &&
             !line.startsWith("{") &&
             !line.contains("•") &&
@@ -65,12 +77,17 @@ object CollectorOcr {
             !line.startsWith("Creature", ignoreCase = true) &&
             !line.startsWith("Enchantment", ignoreCase = true) &&
             !line.startsWith("Artifact", ignoreCase = true)
-        }
+        } ?: allLinesWithBoxes.firstOrNull()?.text
 
         val cleanName = nameCandidate?.replace(Regex("""[0-9/\{\}]"""), "")?.trim()?.ifBlank { null }
 
-        // 2. Find collector block (bottom lines)
-        val parsedCollector = parseRawCollectorLines(allLines)
+        // 2. Bottom Zone (Bottom 18% of card): Collector Block ONLY
+        val collectorLines = allLinesWithBoxes.filter { item ->
+            val top = item.box?.top ?: cardHeight
+            top >= cardHeight * 0.80f
+        }.map { it.text }
+
+        val parsedCollector = parseRawCollectorLines(collectorLines)
 
         val hasValidData = cleanName != null || parsedCollector.collectorNumber != null || parsedCollector.setCode != null
         val confidence = when {
@@ -86,10 +103,12 @@ object CollectorOcr {
             collectorNumber = parsedCollector.collectorNumber,
             language = parsedCollector.language,
             isFoil = parsedCollector.isFoil,
-            rawLines = allLines,
+            rawLines = allLinesWithBoxes.map { it.text },
             confidence = confidence
         )
     }
+
+    private data class LineWithBox(val text: String, val box: Rect?)
 
     fun parseRawCollectorLines(lines: List<String>): ParsedCardOcr {
         if (lines.isEmpty()) return ParsedCardOcr()
@@ -104,16 +123,22 @@ object CollectorOcr {
             isFoil = true
         }
 
-        val setLangRegex = Regex("""([A-Za-z0-9]{3,5})\s*[\u2022\u2219\u00B7\.\-\/]\s*([A-Za-z]{2,3})""", RegexOption.IGNORE_CASE)
-        val collectorRegex = Regex("""\b(?:U|R|M|C|L|T|S)?\s*(\d{1,4}[A-Za-z]?)(?:\s*\/\s*\d{1,4})?\b""", RegexOption.IGNORE_CASE)
+        // Standard MTG set line: e.g. "SOA • EN", "WOE • EN", "FDN • EN", "MH3-EN"
+        val setLangRegex = Regex("""\b([A-Za-z0-9]{3,4})\s*[\u2022\u2219\u00B7\.\-\/]\s*([A-Za-z]{2,3})\b""", RegexOption.IGNORE_CASE)
+        // Standard collector line: e.g. "U 0045", "0045", "0045/0281", "R 0124"
+        val collectorRegex = Regex("""\b(?:U|R|M|C|L|T|S|P)?\s*(\d{1,4}[A-Za-z]?)(?:\s*\/\s*\d{1,4})?\b""", RegexOption.IGNORE_CASE)
 
         for (line in lines) {
             val clean = line.replace("★", "").replace("☆", "").trim()
 
             val setMatch = setLangRegex.find(clean)
             if (setMatch != null && setCode == null) {
-                setCode = setMatch.groupValues[1].uppercase()
-                language = setMatch.groupValues[2].uppercase()
+                val candidateSet = setMatch.groupValues[1].uppercase()
+                // Avoid matching short non-set words
+                if (candidateSet.length in 3..4 && candidateSet.all { it.isLetterOrDigit() }) {
+                    setCode = candidateSet
+                    language = setMatch.groupValues[2].uppercase()
+                }
             }
 
             val numMatch = collectorRegex.find(clean)
@@ -125,13 +150,18 @@ object CollectorOcr {
             }
         }
 
-        if (setCode == null || collectorNumber == null) {
-            val combinedRegex = Regex("""\b([A-Za-z0-9]{3,5})\s+([A-Za-z0-9★†-]*\d[A-Za-z0-9★†-]*)\b""")
+        // Fallback search for 3-letter set codes in the collector block lines
+        if (setCode == null) {
+            val setTokenRegex = Regex("""\b([A-Z]{3})\b""")
             for (line in lines) {
-                val match = combinedRegex.find(line)
+                if (line.contains("Wizards", ignoreCase = true) || line.contains("Coast", ignoreCase = true)) continue
+                val match = setTokenRegex.find(line)
                 if (match != null) {
-                    if (setCode == null) setCode = match.groupValues[1].uppercase()
-                    if (collectorNumber == null) collectorNumber = match.groupValues[2].replace("★", "").trim()
+                    val token = match.groupValues[1]
+                    if (token !in setOf("THE", "AND", "NOT", "FOR", "ALL", "SET", "NEW")) {
+                        setCode = token
+                        break
+                    }
                 }
             }
         }

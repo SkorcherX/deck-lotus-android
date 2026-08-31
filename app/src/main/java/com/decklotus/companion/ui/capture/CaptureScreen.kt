@@ -57,6 +57,10 @@ fun CaptureScreen(
     var showDiagnostics by remember { mutableStateOf(false) }
     var isSessionTrayOpen by remember { mutableStateOf(false) }
 
+    LaunchedEffect(isSessionTrayOpen) {
+        viewModel.setSessionTrayOpen(isSessionTrayOpen)
+    }
+
     var hasCameraPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
@@ -142,22 +146,40 @@ fun CaptureScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Price Pill (Tap to open Session Tray)
-            val displayPrice = if (totalCount > 0) totalValueUsd else (uiState.lastResponse?.marketPriceUsd ?: 0.26)
+            // Price Pill: Clearly labeled BATCH TOTAL
             Box(
                 modifier = Modifier
                     .clickable { isSessionTrayOpen = true }
-                    .background(Color(0xFF262C36).copy(alpha = 0.9f), RoundedCornerShape(20.dp))
+                    .background(Color(0xFF262C36).copy(alpha = 0.95f), RoundedCornerShape(20.dp))
                     .border(1.dp, Color(0xFF3B4352), RoundedCornerShape(20.dp))
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .padding(horizontal = 14.dp, vertical = 6.dp)
             ) {
-                Text(
-                    text = String.format("$%.2f", displayPrice),
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (totalCount > 0) Color(0xFF2EA043) else Color.White,
-                    fontFamily = FontFamily.Monospace
-                )
+                if (totalCount > 0) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "BATCH TOTAL",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF2EA043),
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = String.format("$%.2f", totalValueUsd),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                } else {
+                    Text(
+                        text = "READY",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF7A8499),
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
             }
 
             // Hands-free Auto-Feed Pacing Indicator

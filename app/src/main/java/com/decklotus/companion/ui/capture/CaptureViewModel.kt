@@ -100,13 +100,20 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    val isSessionTrayOpen = MutableStateFlow(false)
+
+    fun setSessionTrayOpen(isOpen: Boolean) {
+        isSessionTrayOpen.value = isOpen
+    }
+
     fun startAutoScanLoop(cameraController: CameraController, previewView: PreviewView) {
         autoScanJob?.cancel()
         autoScanJob = viewModelScope.launch(Dispatchers.Default) {
             while (isActive) {
                 delay(33) // ~30 FPS preview analysis
                 val settings = settingsFlow.value
-                if (_uiState.value.isCapturing) {
+                if (_uiState.value.isCapturing || isSessionTrayOpen.value) {
+                    delay(80)
                     continue
                 }
 
