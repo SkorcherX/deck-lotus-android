@@ -23,6 +23,7 @@ object CollectorOcr {
         val name: String? = null,
         val setCode: String? = null,
         val collectorNumber: String? = null,
+        val candidateNumbers: List<String> = emptyList(),
         val language: String? = null,
         val isFoil: Boolean = false,
         val rawLines: List<String> = emptyList(),
@@ -108,12 +109,13 @@ object CollectorOcr {
             else -> 0.0f
         }
 
-        Log.d(TAG, "Parsed Card: Name=\"$cleanName\", Set=\"${parsedCollector.setCode}\", Num=\"${parsedCollector.collectorNumber}\", Lang=\"${parsedCollector.language}\"")
+        Log.d(TAG, "Parsed Card: Name=\"$cleanName\", Set=\"${parsedCollector.setCode}\", Num=\"${parsedCollector.collectorNumber}\" (Candidates=${parsedCollector.candidateNumbers}), Lang=\"${parsedCollector.language}\"")
 
         return ParsedCardOcr(
             name = cleanName,
             setCode = parsedCollector.setCode,
             collectorNumber = parsedCollector.collectorNumber,
+            candidateNumbers = parsedCollector.candidateNumbers,
             language = parsedCollector.language,
             isFoil = parsedCollector.isFoil,
             rawLines = allLinesWithBoxes.map { it.text },
@@ -128,41 +130,49 @@ object CollectorOcr {
 
         val fullText = lines.joinToString("\n")
         var setCode: String? = null
-        var collectorNumber: String? = null
         var language: String? = null
         var isFoil = false
+        val candidateNumbers = mutableListOf<String>()
 
         if (fullText.contains("★") || fullText.contains("☆") || fullText.contains("*F*", ignoreCase = true) || fullText.contains("(F)", ignoreCase = true)) {
             isFoil = true
         }
 
-        // Pattern 1: Set • Lang (e.g. "SOA • EN", "FDN · EN", "WOE - EN", "MH3/EN", "BLB | EN", "OTJ I EN", "SOA EN")
+        // Pattern 1: Set • Lang (e.g. "SOA • EN", "FDN · EN", "WOE - EN", "MH3/EN", "BLB | EN", "OTJ I EN", "SOS • EN")
         val setLangRegex = Regex("""\b([A-Za-z0-9]{3,4})\s*[\u2022\u2219\u00B7\u25CF\u25AA\.\-\/\\\|I\s]\s*([A-Za-z]{2,3})\b""", RegexOption.IGNORE_CASE)
-        // Pattern 2: Collector number (e.g. "0045", "045/281", "U 0045", "R 0124", "124/281", "018", "018/281")
-        val collectorRegex = Regex("""\b(?:U|R|M|C|L|T|S|P)?\s*(\d{1,4}[A-Za-z]?)(?:\s*\/\s*\d{1,4})?\b""", RegexOption.IGNORE_CASE)
 
-        val nonSetTokens = setOf("THE", "AND", "NOT", "FOR", "ALL", "SET", "NEW", "CARD", "MTG", "DECK", "WOTC", "TM", "HAS", "CAN", "YOU", "GET", "ONE", "TWO")
+        // Pattern 2A: High-Confidence Rarity + Collector Number (e.g. "R 0052", "U 0045", "M 0018", "C 0124")
+        val rarityNumRegex = Regex("""\b(?:R|M|C|U|L|S|T|P)\s*(\d{1,4}[A-Za-z]?)\b""", RegexOption.IGNORE_CASE)
 
-        // Filter out copyright lines so dates like 1993-2024 or 2018 never get parsed as collector numbers
+        // Pattern 2B: Fractional Collector Number (e.g. "0015/0280", "0123/0281", "0052/0281")
+        val fractionRegex = Regex("""\b(\d{1,4}[A-Za-z]?)\s*\/\s*(\d{2,4})\b""")
+
+        // Pattern 2C: Padded 3/4-digit numbers (e.g. "0052", "0045", "0015", "0123")
+        val paddedNumRegex = Regex("""\b(\d{3,4}[A-Za-z]?)\b""")
+
+        // Filter out copyright lines & power/toughness lines
         val filteredLines = lines.filterNot { line ->
             line.contains("Wizards", ignoreCase = true) ||
             line.contains("Coast", ignoreCase = true) ||
             line.contains("TM & ©", ignoreCase = true) ||
             line.contains("©", ignoreCase = true) ||
-            line.contains("Illustrated by", ignoreCase = true)
+            line.contains("Illustrated by", ignoreCase = true) ||
+            line.matches(Regex("""^\s*\d{1,2}\s*\/\s*\d{1,2}\s*$""")) // Exclude "1/1", "2/2", "3/4" P/T box
         }
 
         val linesToInspect = filteredLines.ifEmpty { lines }
 
+        // Phase 1: Search for Rarity + Collector Number & Fractions
         for (line in linesToInspect) {
             val clean = line.replace("★", "").replace("☆", "").trim()
 
-            // Try set • lang match
+            // Check Set • Lang
             if (setCode == null) {
                 val setMatch = setLangRegex.find(clean)
                 if (setMatch != null) {
                     val candidateSet = setMatch.groupValues[1].uppercase()
                     val candidateLang = setMatch.groupValues[2].uppercase()
+                    val nonSetTokens = setOf("THE", "AND", "NOT", "FOR", "ALL", "SET", "NEW", "CARD", "MTG", "DECK", "WOTC", "TM", "HAS", "CAN", "YOU", "GET", "ONE", "TWO")
                     if (candidateSet.length in 3..4 && candidateSet !in nonSetTokens && candidateLang in setOf("EN", "JP", "JA", "DE", "FR", "IT", "ES", "PT", "RU", "KO", "ZHS", "ZHT", "CS", "CT")) {
                         setCode = candidateSet
                         language = candidateLang
@@ -170,23 +180,62 @@ object CollectorOcr {
                 }
             }
 
-            // Try collector number match (ignoring 4-digit years like 1990-2030)
-            if (collectorNumber == null) {
-                val numMatch = collectorRegex.find(clean)
-                if (numMatch != null) {
-                    val candidate = numMatch.groupValues[1]
-                    val intVal = candidate.filter { it.isDigit() }.toIntOrNull() ?: -1
-                    val isYear = intVal in 1990..2030 && candidate.length == 4
-                    if (candidate.any { it.isDigit() } && !isYear) {
-                        collectorNumber = candidate
+            // High-confidence rarity + collector number (e.g. "R 0052" -> captures "0052" and "52")
+            val rarityMatch = rarityNumRegex.find(clean)
+            if (rarityMatch != null) {
+                val num = rarityMatch.groupValues[1]
+                val stripped = num.trimStart('0').ifEmpty { "0" }
+                if (num !in candidateNumbers) candidateNumbers.add(num)
+                if (stripped !in candidateNumbers) candidateNumbers.add(stripped)
+            }
+
+            // Fraction match (e.g. "0015/0280" -> captures "0015" and "15")
+            val fracMatch = fractionRegex.find(clean)
+            if (fracMatch != null) {
+                val num = fracMatch.groupValues[1]
+                val denom = fracMatch.groupValues[2].toIntOrNull() ?: 0
+                if (denom >= 30) { // Set denominator must be >= 30, avoiding P/T like 1/1
+                    val stripped = num.trimStart('0').ifEmpty { "0" }
+                    if (num !in candidateNumbers) candidateNumbers.add(num)
+                    if (stripped !in candidateNumbers) candidateNumbers.add(stripped)
+                }
+            }
+
+            // Padded 3/4-digit numbers (e.g. "0052", "0045", "0015", "0123")
+            val padMatch = paddedNumRegex.find(clean)
+            if (padMatch != null) {
+                val num = padMatch.groupValues[1]
+                val intVal = num.filter { it.isDigit() }.toIntOrNull() ?: -1
+                if (intVal !in 1990..2030) { // Exclude copyright years
+                    val stripped = num.trimStart('0').ifEmpty { "0" }
+                    if (num !in candidateNumbers) candidateNumbers.add(num)
+                    if (stripped !in candidateNumbers) candidateNumbers.add(stripped)
+                }
+            }
+        }
+
+        // Phase 2: Fallback general collector numbers if none found yet
+        if (candidateNumbers.isEmpty()) {
+            val generalCollectorRegex = Regex("""\b(?:U|R|M|C|L|T|S|P)?\s*(\d{1,4}[A-Za-z]?)\b""", RegexOption.IGNORE_CASE)
+            for (line in linesToInspect) {
+                val clean = line.replace("★", "").replace("☆", "").trim()
+                val m = generalCollectorRegex.find(clean)
+                if (m != null) {
+                    val cand = m.groupValues[1]
+                    val intVal = cand.filter { it.isDigit() }.toIntOrNull() ?: -1
+                    if (intVal !in 1990..2030) { // Ignore copyright years
+                        val stripped = cand.trimStart('0').ifEmpty { "0" }
+                        candidateNumbers.add(cand)
+                        if (stripped !in candidateNumbers) candidateNumbers.add(stripped)
                     }
                 }
             }
         }
 
-        // Pattern 3: Fallback standalone 3-uppercase-letter code in the bottom block
+        // Fallback Set Code
         if (setCode == null) {
             val tokenRegex = Regex("""\b([A-Z0-9]{3,4})\b""")
+            val nonSetTokens = setOf("THE", "AND", "NOT", "FOR", "ALL", "SET", "NEW", "CARD", "MTG", "DECK", "WOTC", "TM", "HAS", "CAN", "YOU", "GET", "ONE", "TWO")
             for (line in linesToInspect) {
                 for (match in tokenRegex.findAll(line)) {
                     val token = match.groupValues[1]
@@ -199,10 +248,13 @@ object CollectorOcr {
             }
         }
 
+        val primaryCollector = candidateNumbers.firstOrNull()
+
         return ParsedCardOcr(
             name = null,
             setCode = setCode,
-            collectorNumber = collectorNumber,
+            collectorNumber = primaryCollector,
+            candidateNumbers = candidateNumbers.distinct(),
             language = language,
             isFoil = isFoil,
             rawLines = lines

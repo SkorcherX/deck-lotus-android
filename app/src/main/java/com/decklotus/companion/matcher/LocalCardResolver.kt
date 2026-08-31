@@ -65,8 +65,8 @@ class LocalCardResolver(private val context: Context) {
         if (candidates.isNotEmpty()) {
             val allOcrText = ocr.rawLines.joinToString(" ").uppercase()
             val ocrSetExplicit = ocr.setCode?.uppercase()
-            val ocrNumExplicit = ocr.collectorNumber?.trimStart('0')?.ifEmpty { "0" }
-            val ocrNumRaw = ocr.collectorNumber
+            val candidateNumbers = ocr.candidateNumbers.map { it.trimStart('0').ifEmpty { "0" }.uppercase() }.distinct()
+            val candidateRawNumbers = ocr.candidateNumbers.map { it.uppercase() }.distinct()
 
             var bestPrinting: CardIdentity = candidates.first()
             var highestScore = -9999
@@ -78,7 +78,8 @@ class LocalCardResolver(private val context: Context) {
             for (cand in candidates) {
                 var score = 0
                 val candSet = cand.setCode.uppercase()
-                val candNum = cand.collectorNumber.trimStart('0').ifEmpty { "0" }
+                val candNum = cand.collectorNumber.trimStart('0').ifEmpty { "0" }.uppercase()
+                val candRawNum = cand.collectorNumber.uppercase()
 
                 // A. 256-bit Perceptual Art Hash Verification
                 val artDist = if (artHashHex.isNotBlank()) hashMatcher.getArtDistance(cand.rowId, artHashHex) else 256
@@ -94,35 +95,45 @@ class LocalCardResolver(private val context: Context) {
                 // B. Set Code Match
                 val hasSetMatch: Boolean
                 if (ocrSetExplicit != null && candSet == ocrSetExplicit) {
-                    score += 70
+                    score += 80
                     hasSetMatch = true
                 } else if (allOcrText.contains(Regex("""\b$candSet\b"""))) {
-                    score += 45
+                    score += 50
                     hasSetMatch = true
                 } else {
                     hasSetMatch = false
                 }
 
-                // C. Collector Number Match
+                // C. Collector Number Match across all detected candidate numbers
                 val hasNumMatch: Boolean
-                if (ocrNumRaw != null && cand.collectorNumber.equals(ocrNumRaw, ignoreCase = true)) {
-                    score += 75
+                if (candRawNum in candidateRawNumbers) {
+                    score += 120 // Exact string match (e.g. "0052" == "0052")
                     hasNumMatch = true
-                } else if (ocrNumExplicit != null && candNum == ocrNumExplicit) {
-                    score += 70
+                } else if (candNum in candidateNumbers) {
+                    score += 110 // Exact numeric match (e.g. "52" == "52")
                     hasNumMatch = true
-                } else if (allOcrText.contains(Regex("""\b(?:0*)$candNum\b"""))) {
-                    score += 40
+                } else if (allOcrText.contains(Regex("""\b0*$candNum\b"""))) {
+                    score += 70 // Found in OCR text
                     hasNumMatch = true
                 } else {
                     // Check slight OCR typo on number (e.g. 018 vs 148, edit distance 1)
-                    if (ocrNumExplicit != null && isNumTypo(candNum, ocrNumExplicit)) {
-                        score += 25
+                    val typoMatch = candidateNumbers.any { isNumTypo(candNum, it) }
+                    if (typoMatch) {
+                        score += 35
+                    } else if (candidateNumbers.isNotEmpty()) {
+                        score -= 30 // Mismatch against clearly detected numbers
                     }
                     hasNumMatch = false
                 }
 
-                // D. Session Set Bias tie-breaker
+                // D. Standard Pack Version Stability Preference (+10 for base set numbering)
+                val intCollector = candNum.filter { it.isDigit() }.toIntOrNull() ?: 999
+                val isStandardPackNumber = intCollector in 1..300 && !candRawNum.endsWith("p", ignoreCase = true) && !candRawNum.endsWith("s", ignoreCase = true)
+                if (isStandardPackNumber) {
+                    score += 10
+                }
+
+                // E. Session Set Bias tie-breaker
                 val biasCount = setBiasTally[candSet] ?: 0
                 if (biasCount > 0) {
                     score += kotlin.math.min(20, biasCount * 5)
