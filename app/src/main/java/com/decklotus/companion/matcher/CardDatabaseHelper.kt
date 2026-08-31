@@ -20,7 +20,7 @@ data class CardIdentity(
 }
 
 /**
- * SQLite helper for reading card identities (name, set, collector number, price)
+ * High-speed SQLite helper for reading card identities (name, set, collector number, price)
  * for all 112,815 MTG printings directly on-device.
  */
 class CardDatabaseHelper(private val context: Context) {
@@ -44,79 +44,88 @@ class CardDatabaseHelper(private val context: Context) {
         db = SQLiteDatabase.openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
     }
 
-    fun findCardsByName(name: String): List<CardIdentity> {
+    fun findBestMatchingCardFromLines(lines: List<String>): List<CardIdentity> {
         val database = db ?: return emptyList()
-        val clean = name.trim()
+
+        for (rawLine in lines) {
+            val line = rawLine.replace(Regex("""[0-9/\{\}★☆]"""), "").trim()
+            if (line.length < 3) continue
+
+            // 1. Exact match (case-insensitive)
+            val exactList = queryByNameExact(line)
+            if (exactList.isNotEmpty()) return exactList
+
+            // 2. Prefix match if line is long enough
+            if (line.length >= 5) {
+                val prefixList = queryByNamePrefix(line)
+                if (prefixList.isNotEmpty()) return prefixList
+            }
+        }
+
+        return emptyList()
+    }
+
+    fun findCardsByName(name: String): List<CardIdentity> {
+        val clean = name.replace(Regex("""[0-9/\{\}★☆]"""), "").trim()
         if (clean.length < 2) return emptyList()
 
-        // 1. Exact match (case-insensitive)
-        var cursor = database.rawQuery(
-            "SELECT row_id, name, set_code, collector_number, price_cents FROM printings WHERE name = ? COLLATE NOCASE LIMIT 25",
+        val exact = queryByNameExact(clean)
+        if (exact.isNotEmpty()) return exact
+
+        val prefix = queryByNamePrefix(clean)
+        if (prefix.isNotEmpty()) return prefix
+
+        return queryByNameSubstring(clean)
+    }
+
+    private fun queryByNameExact(clean: String): List<CardIdentity> {
+        val database = db ?: return emptyList()
+        val cursor = database.rawQuery(
+            "SELECT row_id, name, set_code, collector_number, price_cents FROM printings WHERE name = ? COLLATE NOCASE LIMIT 40",
             arrayOf(clean)
         )
         val list = mutableListOf<CardIdentity>()
         try {
             while (cursor.moveToNext()) {
-                list.add(
-                    CardIdentity(
-                        rowId = cursor.getInt(0),
-                        name = cursor.getString(1),
-                        setCode = cursor.getString(2),
-                        collectorNumber = cursor.getString(3),
-                        priceCents = cursor.getInt(4)
-                    )
-                )
+                list.add(CardIdentity(cursor.getInt(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getInt(4)))
             }
         } finally {
             cursor.close()
         }
+        return list
+    }
 
-        if (list.isNotEmpty()) return list
-
-        // 2. Prefix match
-        cursor = database.rawQuery(
-            "SELECT row_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 25",
+    private fun queryByNamePrefix(clean: String): List<CardIdentity> {
+        val database = db ?: return emptyList()
+        val cursor = database.rawQuery(
+            "SELECT row_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 40",
             arrayOf("$clean%")
         )
+        val list = mutableListOf<CardIdentity>()
         try {
             while (cursor.moveToNext()) {
-                list.add(
-                    CardIdentity(
-                        rowId = cursor.getInt(0),
-                        name = cursor.getString(1),
-                        setCode = cursor.getString(2),
-                        collectorNumber = cursor.getString(3),
-                        priceCents = cursor.getInt(4)
-                    )
-                )
+                list.add(CardIdentity(cursor.getInt(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getInt(4)))
             }
         } finally {
             cursor.close()
         }
+        return list
+    }
 
-        if (list.isNotEmpty()) return list
-
-        // 3. Substring match
-        cursor = database.rawQuery(
-            "SELECT row_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 25",
+    private fun queryByNameSubstring(clean: String): List<CardIdentity> {
+        val database = db ?: return emptyList()
+        val cursor = database.rawQuery(
+            "SELECT row_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 40",
             arrayOf("%$clean%")
         )
+        val list = mutableListOf<CardIdentity>()
         try {
             while (cursor.moveToNext()) {
-                list.add(
-                    CardIdentity(
-                        rowId = cursor.getInt(0),
-                        name = cursor.getString(1),
-                        setCode = cursor.getString(2),
-                        collectorNumber = cursor.getString(3),
-                        priceCents = cursor.getInt(4)
-                    )
-                )
+                list.add(CardIdentity(cursor.getInt(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getInt(4)))
             }
         } finally {
             cursor.close()
         }
-
         return list
     }
 

@@ -11,8 +11,7 @@ import java.util.UUID
 
 /**
  * High-precision on-device MTG card identity resolver.
- * Fuses OCR Card Title & Full-Card Text Tokens with the SQLite Printing Database
- * and 256-bit Perceptual Art Hashes for 100% accurate Card Names and Set Codes.
+ * Fuses Tensor G5 OCR reads with the 112,815 MTG Card Database and 256-bit Perceptual Hashes.
  */
 class LocalCardResolver(private val context: Context) {
 
@@ -41,24 +40,24 @@ class LocalCardResolver(private val context: Context) {
 
         val startNs = System.nanoTime()
 
-        // 1. PRIMARY STRATEGY: High-Precision OCR Card Name Lookup in SQLite Database
-        val ocrName = ocr.name
-        val nameCandidates = if (!ocrName.isNullOrBlank()) {
-            withContext(Dispatchers.IO) { dbHelper.findCardsByName(ocrName) }
-        } else {
-            emptyList()
+        // 1. PRIMARY: Discover verified MTG card name across all recognized lines
+        val candidates = withContext(Dispatchers.IO) {
+            if (!ocr.name.isNullOrBlank()) {
+                val direct = dbHelper.findCardsByName(ocr.name)
+                if (direct.isNotEmpty()) return@withContext direct
+            }
+            dbHelper.findBestMatchingCardFromLines(ocr.rawLines)
         }
 
-        if (nameCandidates.isNotEmpty()) {
+        if (candidates.isNotEmpty()) {
             val allOcrText = ocr.rawLines.joinToString(" ").uppercase()
             val ocrSetExplicit = ocr.setCode?.uppercase()
             val ocrNumExplicit = ocr.collectorNumber?.trimStart('0')?.ifEmpty { "0" }
 
-            // Score each candidate printing of this specific card against all OCR tokens
-            var bestPrinting: CardIdentity = nameCandidates.first()
+            var bestPrinting: CardIdentity = candidates.first()
             var highestScore = -1
 
-            for (cand in nameCandidates) {
+            for (cand in candidates) {
                 var score = 0
                 val candSet = cand.setCode.uppercase()
                 val candNum = cand.collectorNumber.trimStart('0').ifEmpty { "0" }
@@ -90,7 +89,7 @@ class LocalCardResolver(private val context: Context) {
             }
 
             val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
-            Log.d("LocalCardResolver", "Resolved by Name+Tokens: \"${bestPrinting.name}\" [${bestPrinting.setCode} #${bestPrinting.collectorNumber}] (score=$highestScore) in ${elapsedMs}ms")
+            Log.d("LocalCardResolver", "Resolved by Database Verification: \"${bestPrinting.name}\" [${bestPrinting.setCode} #${bestPrinting.collectorNumber}] (score=$highestScore) in ${elapsedMs}ms")
 
             return@withContext IngestResponse(
                 tier = "confident",
@@ -108,8 +107,8 @@ class LocalCardResolver(private val context: Context) {
             )
         }
 
-        // 2. SECONDARY STRATEGY: Global Art Hash Search across all 112,815 prints
-        val hashCandidates = hashMatcher.match(artHashHex, frameHashHex, maxDistance = 65, limit = 20)
+        // 2. SECONDARY: Global Art Hash Search across all 112,815 prints
+        val hashCandidates = hashMatcher.match(artHashHex, frameHashHex, maxDistance = 55, limit = 20)
 
         if (hashCandidates.isNotEmpty()) {
             val candidateRowIds = hashCandidates.map { it.rowId }
