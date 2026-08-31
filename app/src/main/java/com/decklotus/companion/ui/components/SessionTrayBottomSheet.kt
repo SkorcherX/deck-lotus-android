@@ -12,8 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.decklotus.companion.data.ScannedCardItem
+import com.decklotus.companion.data.UserProfile
 import com.decklotus.companion.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -34,6 +34,8 @@ fun SessionTrayBottomSheet(
     totalCount: Int,
     totalValueUsd: Double,
     totalFoils: Int,
+    activeProfile: UserProfile?,
+    allProfiles: List<UserProfile>,
     isCommitting: Boolean = false,
     onDismiss: () -> Unit,
     onIncrement: (String) -> Unit,
@@ -41,8 +43,11 @@ fun SessionTrayBottomSheet(
     onToggleFoil: (String) -> Unit,
     onRemove: (String) -> Unit,
     onClearAll: () -> Unit,
+    onSelectProfile: (String) -> Unit,
     onCommitToCollection: () -> Unit = {}
 ) {
+    var showConfirmDialog by remember { mutableStateOf(false) }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF14171D),
@@ -118,7 +123,58 @@ fun SessionTrayBottomSheet(
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Active User Target Pill
+            Surface(
+                color = Color(0xFF1B2028),
+                shape = RoundedCornerShape(10.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2E3440)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.Person, contentDescription = null, tint = LotusPurple, modifier = Modifier.size(18.dp))
+                        Text("Target Collection:", fontSize = 12.sp, color = TextSecondary)
+                        Text(
+                            text = activeProfile?.name ?: "Primary User",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
+                        )
+                        activeProfile?.verifiedUsername?.let {
+                            Text("(@$it)", fontSize = 11.sp, color = TierConfident, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+
+                    if (allProfiles.size > 1) {
+                        Surface(
+                            color = LotusPurple.copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.clickable { showConfirmDialog = true }
+                        ) {
+                            Text(
+                                text = "SWITCH",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = LotusPurple,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
 
             // List of Scanned Cards
             if (cards.isEmpty()) {
@@ -152,7 +208,7 @@ fun SessionTrayBottomSheet(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 380.dp),
+                        .heightIn(max = 340.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(cards, key = { it.id }) { item ->
@@ -168,9 +224,9 @@ fun SessionTrayBottomSheet(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Commit to Collection Button
+                // Commit to Collection Button (Launches Confirmation Warning)
                 Button(
-                    onClick = onCommitToCollection,
+                    onClick = { showConfirmDialog = true },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp),
@@ -185,11 +241,31 @@ fun SessionTrayBottomSheet(
                     } else {
                         Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Commit $totalCount Cards to Collection (${String.format("$%.2f", totalValueUsd)})", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text(
+                            text = "Commit $totalCount Cards to ${activeProfile?.name ?: "Collection"} (${String.format("$%.2f", totalValueUsd)})",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
                     }
                 }
             }
         }
+    }
+
+    // Safety Confirmation Warning Dialog
+    if (showConfirmDialog) {
+        CommitConfirmationDialog(
+            activeProfile = activeProfile,
+            allProfiles = allProfiles,
+            cardCount = totalCount,
+            totalValueUsd = totalValueUsd,
+            onSelectProfile = onSelectProfile,
+            onConfirm = {
+                showConfirmDialog = false
+                onCommitToCollection()
+            },
+            onDismiss = { showConfirmDialog = false }
+        )
     }
 }
 

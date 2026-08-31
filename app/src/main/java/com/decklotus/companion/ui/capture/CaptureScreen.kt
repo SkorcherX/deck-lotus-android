@@ -137,27 +137,46 @@ fun CaptureScreen(
             )
         }
 
-        // Top Status Header: Price Pill & Cradle Feed Indicator
+        // Top Status Header: Price Pill, Cradle Feed Indicator & User Target Pill
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .statusBarsPadding()
                 .padding(top = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // User Target Chip (Tap to open session tray)
+            Box(
+                modifier = Modifier
+                    .clickable { isSessionTrayOpen = true }
+                    .background(Color(0xFF1E2633).copy(alpha = 0.95f), RoundedCornerShape(20.dp))
+                    .border(1.dp, LotusPurple.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Icon(Icons.Default.Person, contentDescription = null, tint = LotusPurple, modifier = Modifier.size(14.dp))
+                    Text(
+                        text = settings.activeProfile?.name ?: "User",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+
             // Price Pill: Clearly labeled BATCH TOTAL
             Box(
                 modifier = Modifier
                     .clickable { isSessionTrayOpen = true }
                     .background(Color(0xFF262C36).copy(alpha = 0.95f), RoundedCornerShape(20.dp))
                     .border(1.dp, Color(0xFF3B4352), RoundedCornerShape(20.dp))
-                    .padding(horizontal = 14.dp, vertical = 6.dp)
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
                 if (totalCount > 0) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            text = "BATCH TOTAL",
+                            text = "BATCH",
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF2EA043),
@@ -165,7 +184,7 @@ fun CaptureScreen(
                         )
                         Text(
                             text = String.format("$%.2f", totalValueUsd),
-                            fontSize = 16.sp,
+                            fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             fontFamily = FontFamily.Monospace
@@ -174,7 +193,7 @@ fun CaptureScreen(
                 } else {
                     Text(
                         text = "READY",
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF7A8499),
                         fontFamily = FontFamily.Monospace
@@ -185,22 +204,22 @@ fun CaptureScreen(
             // Hands-free Auto-Feed Pacing Indicator
             if (settings.autoScanEnabled) {
                 val (cradleText, cradleColor) = when (uiState.cradleState) {
-                    SettleState.WAITING_FOR_CARD -> "DROP CARD" to LotusCyan
-                    SettleState.CARD_MOVING -> "SETTLING..." to TierPickPrinting
-                    SettleState.CARD_SETTLING -> "LOCKING..." to LotusPurple
-                    SettleState.CARD_SETTLED -> "READING..." to TierConfident
-                    SettleState.LOCKED_AFTER_SCAN -> "NEXT CARD →" to TierConfident
+                    SettleState.WAITING_FOR_CARD -> "DROP" to LotusCyan
+                    SettleState.CARD_MOVING -> "SETTLING" to TierPickPrinting
+                    SettleState.CARD_SETTLING -> "LOCK" to LotusPurple
+                    SettleState.CARD_SETTLED -> "READ" to TierConfident
+                    SettleState.LOCKED_AFTER_SCAN -> "NEXT →" to TierConfident
                 }
 
                 Box(
                     modifier = Modifier
                         .background(cradleColor.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
                         .border(1.dp, cradleColor.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
-                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Text(
                         text = cradleText,
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = cradleColor,
                         fontFamily = FontFamily.Monospace
@@ -417,6 +436,8 @@ fun CaptureScreen(
                 totalCount = totalCount,
                 totalValueUsd = totalValueUsd,
                 totalFoils = totalFoils,
+                activeProfile = settings.activeProfile,
+                allProfiles = settings.userProfiles,
                 isCommitting = uiState.isCommitting,
                 onDismiss = { isSessionTrayOpen = false },
                 onIncrement = { viewModel.incrementQuantity(it) },
@@ -424,6 +445,7 @@ fun CaptureScreen(
                 onToggleFoil = { viewModel.toggleFoil(it) },
                 onRemove = { viewModel.removeCard(it) },
                 onClearAll = { viewModel.clearSession() },
+                onSelectProfile = { viewModel.selectActiveProfile(it) },
                 onCommitToCollection = { viewModel.commitBatchToCollection() }
             )
         }

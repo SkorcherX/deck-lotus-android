@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.decklotus.companion.data.AppSettings
 import com.decklotus.companion.data.SettingsRepository
+import com.decklotus.companion.data.UserProfile
 import com.decklotus.companion.network.DeckLotusApiClient
 import com.decklotus.companion.network.ServerConnectionStatus
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,12 +34,80 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun selectActiveProfile(profileId: String) {
+        viewModelScope.launch {
+            repository.updateSettings { it.copy(activeProfileId = profileId) }
+            testConnection()
+        }
+    }
+
+    fun addProfile(name: String, token: String) {
+        viewModelScope.launch {
+            val newProfile = UserProfile(name = name.trim(), apiToken = token.trim())
+            repository.updateSettings { current ->
+                val list = current.userProfiles + newProfile
+                val activeId = if (current.activeProfileId.isBlank()) newProfile.id else current.activeProfileId
+                current.copy(userProfiles = list, activeProfileId = activeId)
+            }
+            verifyProfile(newProfile.id)
+        }
+    }
+
+    fun updateProfile(id: String, name: String, token: String) {
+        viewModelScope.launch {
+            repository.updateSettings { current ->
+                val list = current.userProfiles.map {
+                    if (it.id == id) it.copy(name = name.trim(), apiToken = token.trim()) else it
+                }
+                current.copy(userProfiles = list)
+            }
+            verifyProfile(id)
+        }
+    }
+
+    fun deleteProfile(id: String) {
+        viewModelScope.launch {
+            repository.updateSettings { current ->
+                val list = current.userProfiles.filterNot { it.id == id }
+                val nextActive = if (current.activeProfileId == id) list.firstOrNull()?.id ?: "" else current.activeProfileId
+                current.copy(userProfiles = list, activeProfileId = nextActive)
+            }
+        }
+    }
+
+    fun verifyProfile(profileId: String) {
+        val current = settings.value
+        val profile = current.userProfiles.firstOrNull { it.id == profileId } ?: return
+        viewModelScope.launch {
+            val result = apiClient.testConnection(current.baseUrl, profile.apiToken)
+            if (result is ServerConnectionStatus.Connected && !result.username.isNullOrBlank()) {
+                repository.updateSettings { curr ->
+                    val updatedList = curr.userProfiles.map {
+                        if (it.id == profileId) it.copy(verifiedUsername = result.username) else it
+                    }
+                    curr.copy(userProfiles = updatedList)
+                }
+            }
+        }
+    }
+
     fun testConnection() {
         val current = settings.value
         _connectionStatus.value = ServerConnectionStatus.Checking
         viewModelScope.launch {
-            val result = apiClient.testConnection(current.baseUrl, current.apiToken)
+            val result = apiClient.testConnection(current.baseUrl, current.effectiveToken)
             _connectionStatus.value = result
+            if (result is ServerConnectionStatus.Connected && !result.username.isNullOrBlank()) {
+                val activeId = current.activeProfileId
+                if (activeId.isNotBlank()) {
+                    repository.updateSettings { curr ->
+                        val updatedList = curr.userProfiles.map {
+                            if (it.id == activeId) it.copy(verifiedUsername = result.username) else it
+                        }
+                        curr.copy(userProfiles = updatedList)
+                    }
+                }
+            }
         }
     }
 

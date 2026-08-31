@@ -203,6 +203,12 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         _uiState.update { it.copy(lastResponse = null, lastError = null) }
     }
 
+    fun selectActiveProfile(profileId: String) {
+        viewModelScope.launch {
+            settingsRepo.updateSettings { it.copy(activeProfileId = profileId) }
+        }
+    }
+
     fun commitBatchToCollection() {
         val currentCards = _sessionCards.value
         if (currentCards.isEmpty()) return
@@ -225,13 +231,15 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 )
             }
 
-            val result = apiClient.commitBatchToCollection(settings.baseUrl, settings.apiToken, items)
+            val targetName = settings.activeProfile?.name ?: "Collection"
+            val token = settings.effectiveToken
+            val result = apiClient.commitBatchToCollection(settings.baseUrl, token, items)
             _uiState.update { it.copy(isCommitting = false) }
 
             if (result.isSuccess) {
                 val res = result.getOrNull()
                 val added = res?.added ?: currentCards.sumOf { it.quantity }
-                Toast.makeText(getApplication(), "✓ Committed $added cards to collection!", Toast.LENGTH_LONG).show()
+                Toast.makeText(getApplication(), "✓ Committed $added cards to $targetName's collection!", Toast.LENGTH_LONG).show()
                 clearSession()
                 isSessionTrayOpen.value = false
             } else {
