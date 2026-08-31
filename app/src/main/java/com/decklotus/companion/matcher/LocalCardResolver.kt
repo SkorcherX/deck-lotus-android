@@ -126,10 +126,9 @@ class LocalCardResolver(private val context: Context) {
                     hasNumMatch = false
                 }
 
-                // D. Standard Pack Version Stability Preference (+10 for base set numbering)
+                // D. Standard Pack Version Stability Preference (+10 only as fallback when no OCR numbers detected)
                 val intCollector = candNum.filter { it.isDigit() }.toIntOrNull() ?: 999
-                val isStandardPackNumber = intCollector in 1..300 && !candRawNum.endsWith("p", ignoreCase = true) && !candRawNum.endsWith("s", ignoreCase = true)
-                if (isStandardPackNumber) {
+                if (candidateNumbers.isEmpty() && intCollector in 1..300 && !candRawNum.endsWith("p", ignoreCase = true) && !candRawNum.endsWith("s", ignoreCase = true)) {
                     score += 10
                 }
 
@@ -139,7 +138,7 @@ class LocalCardResolver(private val context: Context) {
                     score += kotlin.math.min(20, biasCount * 5)
                 }
 
-                if (score > highestScore) {
+                if (score > highestScore || (score == highestScore && intCollector < (bestPrinting.collectorNumber.filter { it.isDigit() }.toIntOrNull() ?: 999))) {
                     highestScore = score
                     bestPrinting = cand
                     bestArtDist = artDist
