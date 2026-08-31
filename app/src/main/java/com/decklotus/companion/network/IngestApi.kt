@@ -7,7 +7,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 class IngestApi(
@@ -45,7 +44,13 @@ class IngestApi(
             .post(requestBody)
 
         if (!token.isNullOrBlank()) {
-            requestBuilder.addHeader("Authorization", "Bearer $token")
+            val clean = token.trim()
+            requestBuilder.addHeader("X-API-Key", clean)
+            if (!clean.startsWith("Bearer ", ignoreCase = true)) {
+                requestBuilder.addHeader("Authorization", "Bearer $clean")
+            } else {
+                requestBuilder.addHeader("Authorization", clean)
+            }
         }
 
         try {

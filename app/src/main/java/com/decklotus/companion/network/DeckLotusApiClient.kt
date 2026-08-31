@@ -5,6 +5,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -15,8 +17,8 @@ sealed class ServerConnectionStatus {
     object Idle : ServerConnectionStatus()
     object Checking : ServerConnectionStatus()
     data class Connected(val username: String?, val latencyMs: Long) : ServerConnectionStatus()
-    data class CloudflareAuthRequired(val message: String = "Cloudflare Access session required. Tap to log in.") : ServerConnectionStatus()
-    data class DeckLotusAuthRequired(val message: String = "Bearer token missing or rejected by Deck Lotus.") : ServerConnectionStatus()
+    data class CloudflareAuthRequired(val message: String = "Cloudflare Access session required. Tap CF Portal to log in.") : ServerConnectionStatus()
+    data class DeckLotusAuthRequired(val message: String = "API Key / Token rejected by Deck Lotus.") : ServerConnectionStatus()
     data class Unreachable(val errorMessage: String) : ServerConnectionStatus()
 }
 
@@ -75,7 +77,13 @@ class DeckLotusApiClient(
             .get()
 
         if (!token.isNullOrBlank()) {
-            requestBuilder.addHeader("Authorization", "Bearer $token")
+            val clean = token.trim()
+            requestBuilder.addHeader("X-API-Key", clean)
+            if (!clean.startsWith("Bearer ", ignoreCase = true)) {
+                requestBuilder.addHeader("Authorization", "Bearer $clean")
+            } else {
+                requestBuilder.addHeader("Authorization", clean)
+            }
         }
 
         try {
@@ -87,7 +95,7 @@ class DeckLotusApiClient(
                 val location = response.header("Location").orEmpty()
                 val bodyText = response.body?.string().orEmpty()
 
-                Log.d("DeckLotusApiClient", "Ping $url -> Code: $code, Content-Type: $contentType, CF-Ray: $cfRay")
+                Log.d("DeckLotusApiClient", "Ping $url -> Code: $code, Content-Type: $contentType, CF-Ray: $cfRay, Body: $bodyText")
 
                 // 1. Cloudflare Access challenge detection
                 if (code == 302 || code == 307) {
@@ -111,9 +119,10 @@ class DeckLotusApiClient(
                 if (response.isSuccessful) {
                     var username: String? = null
                     try {
-                        val parsed = json.decodeFromString<Map<String, kotlinx.serialization.json.JsonElement>>(bodyText)
-                        val userObj = parsed["user"]?.toString()
-                        if (userObj != null) username = userObj
+                        val parsed = json.parseToJsonElement(bodyText).jsonObject
+                        val userObj = parsed["user"]?.jsonObject
+                        val uName = userObj?.get("username")?.jsonPrimitive?.content
+                        if (uName != null) username = uName
                     } catch (_: Exception) {}
 
                     return@withContext ServerConnectionStatus.Connected(username = username, latencyMs = elapsedMs)
@@ -152,7 +161,13 @@ class DeckLotusApiClient(
             .post(requestBody)
 
         if (!token.isNullOrBlank()) {
-            requestBuilder.addHeader("Authorization", "Bearer $token")
+            val clean = token.trim()
+            requestBuilder.addHeader("X-API-Key", clean)
+            if (!clean.startsWith("Bearer ", ignoreCase = true)) {
+                requestBuilder.addHeader("Authorization", "Bearer $clean")
+            } else {
+                requestBuilder.addHeader("Authorization", clean)
+            }
         }
 
         try {
