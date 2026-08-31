@@ -91,14 +91,16 @@ object CollectorOcr {
 
         val cleanName = nameCandidate?.replace(Regex("""[0-9/\{\}]"""), "")?.trim()?.ifBlank { null }
 
-        // 2. Bottom Zone (Bottom 32% of card): Collector Block
+        // 2. Bottom Zone (Bottom 15% of card): Collector Block only
         val collectorLinesWithBoxes = allLinesWithBoxes.filter { item ->
             val top = item.box?.top ?: cardHeight
-            top >= cardHeight * 0.68f
+            top >= cardHeight * 0.84f
         }
 
         val collectorLines = collectorLinesWithBoxes.map { it.text }
-        val effectiveCollectorLines = collectorLines.ifEmpty { allLinesWithBoxes.map { it.text } }
+        val effectiveCollectorLines = collectorLines.ifEmpty { 
+            allLinesWithBoxes.filter { (it.box?.top ?: 0) >= cardHeight * 0.78f }.map { it.text } 
+        }
         val parsedCollector = parseRawCollectorLines(effectiveCollectorLines)
 
         val hasValidData = cleanName != null || parsedCollector.collectorNumber != null || parsedCollector.setCode != null
@@ -138,6 +140,13 @@ object CollectorOcr {
             isFoil = true
         }
 
+        val nonSetTokens = setOf(
+            "THE", "AND", "NOT", "FOR", "ALL", "SET", "NEW", "CARD", "MTG", "DECK", "WOTC", "TM", "HAS", "CAN", 
+            "YOU", "GET", "ONE", "TWO", "FROM", "THAT", "THIS", "WITH", "HAVE", "DRAW", "EACH", "TURN", "LIFE", 
+            "WHEN", "THEN", "LOS", "TEN", "LESS", "MORE", "COST", "COPY", "CAST", "PLAY", "DROP", "GAIN", "DEAL", 
+            "TAP", "UNT", "CRE", "SOR", "INS", "ART", "LAN", "PLA"
+        )
+
         // Pattern 1A: Set • Lang with separators (e.g. "SOA • EN", "FDN · EN", "WOE - EN", "MH3/EN", "BLB | EN", "OTJ I EN", "SOS • EN")
         val setLangRegex = Regex("""\b([A-Za-z0-9]{3,4})\s*[\u2022\u2219\u00B7\u25CF\u25AA\.\-\/\\\|I\s]\s*([A-Za-z]{2,3})\b""", RegexOption.IGNORE_CASE)
 
@@ -145,8 +154,8 @@ object CollectorOcr {
         val mergedSetLangRegex = Regex("""\b([A-Za-z0-9]{3,4})(EN|JP|JA|DE|FR|IT|ES|PT|RU|KO|ZHS|ZHT|CS|CT)\b""", RegexOption.IGNORE_CASE)
         val mergedPrefixRegex = Regex("""\b([A-Za-z0-9]{3,4})(EN|JP|JA|DE|FR|IT|ES|PT|RU|KO|ZHS|ZHT|CS|CT)[A-Za-z]*\b""", RegexOption.IGNORE_CASE)
 
-        // Pattern 2A: High-Confidence Rarity + Collector Number (e.g. "R 0052", "RO052", "M O078", "U 0045", "M 0018", "C 0124", "C O017")
-        val rarityNumRegex = Regex("""\b(?:R|M|C|U|L|S|T|P)\s*([0-9Oo]{1,4}[A-Za-z]?)\b""", RegexOption.IGNORE_CASE)
+        // Pattern 2A: High-Confidence Rarity + Collector Number (e.g. "R 0052", "RO052", "M O078", "U 0045", "J O017", "C 0124", "C O017", "L 0282")
+        val rarityNumRegex = Regex("""\b(?:R|M|C|U|L|S|T|P|J)\s*([0-9Oo]{1,4}[A-Za-z]?)\b""", RegexOption.IGNORE_CASE)
 
         // Pattern 2B: Fractional Collector Number (e.g. "0015/0280", "0123/0281", "0052/0281")
         val fractionRegex = Regex("""\b([0-9Oo]{1,4}[A-Za-z]?)\s*\/\s*(\d{2,4})\b""")
@@ -176,7 +185,6 @@ object CollectorOcr {
                 if (setMatch != null) {
                     val candidateSet = setMatch.groupValues[1].uppercase()
                     val candidateLang = setMatch.groupValues[2].uppercase()
-                    val nonSetTokens = setOf("THE", "AND", "NOT", "FOR", "ALL", "SET", "NEW", "CARD", "MTG", "DECK", "WOTC", "TM", "HAS", "CAN", "YOU", "GET", "ONE", "TWO", "FROM")
                     if (candidateSet.length in 3..4 && candidateSet !in nonSetTokens && candidateLang in setOf("EN", "JP", "JA", "DE", "FR", "IT", "ES", "PT", "RU", "KO", "ZHS", "ZHT", "CS", "CT")) {
                         setCode = candidateSet
                         language = candidateLang
@@ -190,7 +198,6 @@ object CollectorOcr {
                 if (mergedMatch != null) {
                     val candidateSet = mergedMatch.groupValues[1].uppercase()
                     val candidateLang = mergedMatch.groupValues[2].uppercase()
-                    val nonSetTokens = setOf("THE", "AND", "NOT", "FOR", "ALL", "SET", "NEW", "CARD", "MTG", "DECK", "WOTC", "TM", "HAS", "CAN", "YOU", "GET", "ONE", "TWO", "FROM")
                     if (candidateSet.length in 3..4 && candidateSet !in nonSetTokens) {
                         setCode = candidateSet
                         language = candidateLang
@@ -198,7 +205,7 @@ object CollectorOcr {
                 }
             }
 
-            // High-confidence rarity + collector number (e.g. "R 0052", "RO052", "M O078" -> captures "0052" and "52")
+            // High-confidence rarity + collector number (e.g. "R 0052", "RO052", "M O078", "J O017" -> captures "0052" and "52")
             val rarityMatch = rarityNumRegex.find(clean)
             if (rarityMatch != null) {
                 val rawNum = rarityMatch.groupValues[1].replace('O', '0').replace('o', '0')
