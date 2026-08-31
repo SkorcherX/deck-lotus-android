@@ -266,14 +266,10 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     )
                 } else {
                     val targetAspect = 63.0f / 88.0f
-                    var cardH = h * 0.70f
-                    var cardW = cardH * targetAspect
-                    if (cardW > w * 0.85f) {
-                        cardW = w * 0.85f
-                        cardH = cardW / targetAspect
-                    }
+                    val cardH = h * 0.58f
+                    val cardW = cardH * targetAspect
                     val left = (srcWOrFallback(w) - cardW) / 2.0f
-                    val top = (h - cardH) * 0.40f
+                    val top = h * 0.15f
                     listOf(
                         PointF(left, top),
                         PointF(left + cardW, top),
@@ -304,8 +300,9 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
                 // 4. Resolve: On-Device Matcher across 112,815 MTG cards (or LAN Server)
                 val respStart = System.nanoTime()
+                val setTally = _sessionCards.value.groupingBy { it.setCode.uppercase() }.eachCount()
                 val resp = if (settings.useMockServer) {
-                    localResolver.resolve(hashes.artHash, hashes.frameHash, fullOcr, fullOcr.isFoil)
+                    localResolver.resolve(hashes.artHash, hashes.frameHash, fullOcr, fullOcr.isFoil, setTally)
                 } else {
                     val liveMeta = cameraController.liveMetadata.value
                     val request = IngestRequest(
@@ -327,7 +324,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                         commit = IngestCommitOptions(isFoil = fullOcr.isFoil)
                     )
                     val netResult = ingestApi.postIngest(settings.baseUrl, settings.apiToken, request)
-                    netResult.response ?: localResolver.resolve(hashes.artHash, hashes.frameHash, fullOcr, fullOcr.isFoil)
+                    netResult.response ?: localResolver.resolve(hashes.artHash, hashes.frameHash, fullOcr, fullOcr.isFoil, setTally)
                 }
                 val respMs = (System.nanoTime() - respStart) / 1_000_000
                 val totalMs = (System.nanoTime() - totalStart) / 1_000_000

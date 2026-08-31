@@ -34,7 +34,8 @@ class LocalCardResolver(private val context: Context) {
         artHashHex: String,
         frameHashHex: String?,
         ocr: CollectorOcr.ParsedCardOcr,
-        isFoil: Boolean = false
+        isFoil: Boolean = false,
+        setBiasTally: Map<String, Int> = emptyMap()
     ): IngestResponse = withContext(Dispatchers.Default) {
         if (!isReady) initialize()
 
@@ -64,16 +65,22 @@ class LocalCardResolver(private val context: Context) {
 
                 // A. Explicit Set Code match
                 if (ocrSetExplicit != null && candSet == ocrSetExplicit) {
-                    score += 50
+                    score += 60
                 } else if (allOcrText.contains(Regex("""\b$candSet\b"""))) {
-                    score += 30
+                    score += 40
                 }
 
                 // B. Collector Number match (with and without leading zeroes)
                 if (ocrNumExplicit != null && candNum == ocrNumExplicit) {
-                    score += 50
+                    score += 60
                 } else if (allOcrText.contains(Regex("""\b(?:0*)$candNum\b"""))) {
-                    score += 20
+                    score += 35
+                }
+
+                // C. Session Set Bias tie-breaker (cards in a stack typically share sets)
+                val biasCount = setBiasTally[candSet] ?: 0
+                if (biasCount > 0) {
+                    score += kotlin.math.min(25, biasCount * 5)
                 }
 
                 if (score > highestScore) {
