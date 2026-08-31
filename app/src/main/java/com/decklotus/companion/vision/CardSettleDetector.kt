@@ -16,9 +16,9 @@ enum class SettleState {
  * Monitors consecutive preview frames at 30+ FPS (<1ms CPU overhead).
  */
 class CardSettleDetector(
-    private val motionThreshold: Float = 12.0f,
-    private val settleThreshold: Float = 4.0f,
-    private val settleDurationMs: Long = 100L
+    private val motionThreshold: Float = 8.0f,
+    private val settleThreshold: Float = 3.5f,
+    private val settleDurationMs: Long = 120L
 ) {
     var state: SettleState = SettleState.WAITING_FOR_CARD
         private set
@@ -49,12 +49,9 @@ class CardSettleDetector(
 
         when (state) {
             SettleState.WAITING_FOR_CARD -> {
+                // Only begin tracking when motion is detected (card entering/sliding into cradle)
                 if (mad > motionThreshold) {
                     state = SettleState.CARD_MOVING
-                } else if (mad <= settleThreshold) {
-                    // If card is already in cradle when starting
-                    state = SettleState.CARD_SETTLING
-                    settleStartTime = currentTimeMs
                 }
             }
 
@@ -75,12 +72,12 @@ class CardSettleDetector(
             }
 
             SettleState.CARD_SETTLED -> {
-                // Wait for capture callback to mark as locked
+                // Waiting for capture execution
             }
 
             SettleState.LOCKED_AFTER_SCAN -> {
-                // Require significant motion (new card entered or old card removed) before re-arming
-                if (mad > motionThreshold * 1.1f) {
+                // Require motion of the next card entering before re-arming
+                if (mad > motionThreshold) {
                     state = SettleState.CARD_MOVING
                 }
             }
@@ -95,7 +92,6 @@ class CardSettleDetector(
 
     fun reset() {
         state = SettleState.WAITING_FOR_CARD
-        prevSampleGrid = null
         settleStartTime = 0
     }
 

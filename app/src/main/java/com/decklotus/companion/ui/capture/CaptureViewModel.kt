@@ -383,6 +383,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                         )
                     }
                 } else {
+                    settleDetector.reset()
                     if (!isAutoTriggered) {
                         triggerHaptic(isSuccess = false)
                         if (settings.soundFeedbackEnabled) soundFeedback.playErrorTone()
@@ -399,6 +400,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 }
 
             } catch (e: Exception) {
+                settleDetector.reset()
                 triggerHaptic(isSuccess = false)
                 if (settings.soundFeedbackEnabled) soundFeedback.playErrorTone()
                 val totalMs = (System.nanoTime() - totalStart) / 1_000_000
