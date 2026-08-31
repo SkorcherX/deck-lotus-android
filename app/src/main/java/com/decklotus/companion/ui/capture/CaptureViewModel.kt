@@ -30,12 +30,12 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.util.UUID
 
-enum class PriceBand(val minPrice: Double, val colorArgb: Long, val bandName: String) {
-    PURPLE(20.0, 0xFFC084FC, "purple"),
-    BLUE(10.0, 0xFF60A5FA, "blue"),
-    GREEN(5.0, 0xFF4ADE80, "green"),
-    YELLOW(1.0, 0xFFFBBF24, "yellow"),
-    GREY(Double.NEGATIVE_INFINITY, 0xFFCBD5E1, "grey");
+enum class PriceBand(val minPrice: Double, val colorArgb: Int, val bandName: String) {
+    PURPLE(20.0, 0xFFC084FC.toInt(), "purple"),
+    BLUE(10.0, 0xFF60A5FA.toInt(), "blue"),
+    GREEN(5.0, 0xFF4ADE80.toInt(), "green"),
+    YELLOW(1.0, 0xFFFBBF24.toInt(), "yellow"),
+    GREY(Double.NEGATIVE_INFINITY, 0xFFCBD5E1.toInt(), "grey");
 
     companion object {
         fun fromPrice(price: Double?): PriceBand {
@@ -62,7 +62,7 @@ data class CaptureUiState(
     val cradleState: SettleState = SettleState.WAITING_FOR_CARD,
     val shutterFlashTrigger: Long = 0L,
     val matchPulseTrigger: Long = 0L,
-    val matchPulseColor: Long = 0xFFCBD5E1,
+    val matchPulseColor: Int = 0xFFCBD5E1.toInt(),
     val isMiss: Boolean = false,
     val detectedCard: DetectedCardQuad? = null,
     val isCommitting: Boolean = false
@@ -420,7 +420,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                             lastError = resp.error ?: "Card not recognized",
                             lastTimings = timings,
                             matchPulseTrigger = System.currentTimeMillis(),
-                            matchPulseColor = 0xFFF87171,
+                            matchPulseColor = 0xFFF87171.toInt(),
                             isMiss = true,
                             cradleState = SettleState.WAITING_FOR_CARD
                         )
@@ -438,7 +438,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                         lastError = e.localizedMessage ?: e.javaClass.simpleName,
                         lastTimings = CaptureTimings(totalMs = totalMs),
                         matchPulseTrigger = System.currentTimeMillis(),
-                        matchPulseColor = 0xFFF87171,
+                        matchPulseColor = 0xFFF87171.toInt(),
                         isMiss = true,
                         cradleState = SettleState.WAITING_FOR_CARD
                     )

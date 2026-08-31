@@ -158,7 +158,7 @@ fun CaptureScreen(
 
         // Price Band Peripheral Pulse (Purple >= $20, Blue >= $10, Green >= $5, Yellow >= $1, Grey < $1, Red = Miss)
         if (matchPulseAlpha.value > 0.01f) {
-            val pulseColor = Color(uiState.matchPulseColor.toULong())
+            val pulseColor = Color(uiState.matchPulseColor)
             Box(
                 modifier = Modifier
                     .fillMaxSize()
