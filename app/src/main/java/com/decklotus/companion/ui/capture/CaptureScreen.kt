@@ -106,7 +106,7 @@ fun CaptureScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         if (hasCameraPermission) {
-            CameraPreviewView(previewView = previewView)
+            CameraPreviewView(previewView = previewView, detectedCard = uiState.detectedCard, cradleState = uiState.cradleState)
         } else {
             Box(
                 modifier = Modifier.fillMaxSize(),

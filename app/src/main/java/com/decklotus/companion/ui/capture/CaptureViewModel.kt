@@ -16,10 +16,12 @@ import com.decklotus.companion.data.AppSettings
 import com.decklotus.companion.data.SettingsRepository
 import com.decklotus.companion.network.*
 import com.decklotus.companion.util.SoundFeedback
+import com.decklotus.companion.vision.CardDetector
 import com.decklotus.companion.vision.CardGeometry
 import com.decklotus.companion.vision.CardHasher
 import com.decklotus.companion.vision.CardSettleDetector
 import com.decklotus.companion.vision.CollectorOcr
+import com.decklotus.companion.vision.DetectedCardQuad
 import com.decklotus.companion.vision.SettleState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -40,7 +42,8 @@ data class CaptureUiState(
     val rectifiedCardBitmap: Bitmap? = null,
     val sessionScanCount: Int = 0,
     val cradleState: SettleState = SettleState.WAITING_FOR_CARD,
-    val flashPromptTrigger: Long = 0L // Timestamp to trigger visual screen flash animation
+    val flashPromptTrigger: Long = 0L,
+    val detectedCard: DetectedCardQuad? = null
 )
 
 class CaptureViewModel(application: Application) : AndroidViewModel(application) {
@@ -56,6 +59,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
     private val mockServer = MockIngestServer()
     private val soundFeedback = SoundFeedback(application)
     private val settleDetector = CardSettleDetector()
+    private val cardDetector = CardDetector()
 
     private var autoScanJob: Job? = null
 
@@ -85,18 +89,28 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         autoScanJob?.cancel()
         autoScanJob = viewModelScope.launch(Dispatchers.Default) {
             while (isActive) {
-                delay(33) // ~30 FPS polling for card settle in cradle
+                delay(33) // ~30 FPS preview analysis
                 val settings = settingsFlow.value
-                if (!settings.autoScanEnabled || _uiState.value.isCapturing) {
+                if (_uiState.value.isCapturing) {
                     continue
                 }
 
                 val frameBitmap = withContext(Dispatchers.Main) { previewView.bitmap } ?: continue
+                
+                // 1. Detect dynamic card contours
+                val detected = cardDetector.detectCard(frameBitmap)
+                
+                // 2. Track motion & settle
                 val settled = settleDetector.processFrame(frameBitmap)
 
-                _uiState.update { it.copy(cradleState = settleDetector.state) }
+                _uiState.update { 
+                    it.copy(
+                        cradleState = settleDetector.state,
+                        detectedCard = detected
+                    ) 
+                }
 
-                if (settled && !_uiState.value.isCapturing) {
+                if (settled && settings.autoScanEnabled && !_uiState.value.isCapturing) {
                     withContext(Dispatchers.Main) {
                         triggerCapture(cameraController, previewView, isAutoTriggered = true)
                     }
@@ -149,32 +163,40 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
             val settings = settingsFlow.value
 
             try {
-
                 // 1. Instant frame grab
                 val capStart = System.nanoTime()
                 val rawBitmap = previewView?.bitmap ?: cameraController.takePictureBitmap()
                 val capMs = (System.nanoTime() - capStart) / 1_000_000
 
-                // 2. Warp / Rectify to standard 487x680 card frame
+                // 2. Warp / Rectify using detected card corners (or centered cradle fallback)
                 val w = rawBitmap.width.toFloat()
                 val h = rawBitmap.height.toFloat()
 
-                val targetAspect = 63.0f / 88.0f
-                var cardH = h * 0.72f
-                var cardW = cardH * targetAspect
-                if (cardW > w * 0.88f) {
-                    cardW = w * 0.88f
-                    cardH = cardW / targetAspect
+                val detected = _uiState.value.detectedCard
+                val quad = if (detected != null) {
+                    listOf(
+                        PointF(detected.topLeft.x * w, detected.topLeft.y * h),
+                        PointF(detected.topRight.x * w, detected.topRight.y * h),
+                        PointF(detected.bottomRight.x * w, detected.bottomRight.y * h),
+                        PointF(detected.bottomLeft.x * w, detected.bottomLeft.y * h)
+                    )
+                } else {
+                    val targetAspect = 63.0f / 88.0f
+                    var cardH = h * 0.72f
+                    var cardW = cardH * targetAspect
+                    if (cardW > w * 0.88f) {
+                        cardW = w * 0.88f
+                        cardH = cardW / targetAspect
+                    }
+                    val left = (w - cardW) / 2.0f
+                    val top = (h - cardH) / 2.0f
+                    listOf(
+                        PointF(left, top),
+                        PointF(left + cardW, top),
+                        PointF(left + cardW, top + cardH),
+                        PointF(left, top + cardH)
+                    )
                 }
-                val left = (w - cardW) / 2.0f
-                val top = (h - cardH) / 2.0f
-
-                val quad = listOf(
-                    PointF(left, top),
-                    PointF(left + cardW, top),
-                    PointF(left + cardW, top + cardH),
-                    PointF(left, top + cardH)
-                )
 
                 val rectified = withContext(Dispatchers.Default) {
                     CardGeometry.warpQuad(rawBitmap, quad, CardGeometry.HASH_WIDTH, CardGeometry.HASH_HEIGHT)
