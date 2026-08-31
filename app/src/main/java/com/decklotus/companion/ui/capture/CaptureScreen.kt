@@ -106,7 +106,7 @@ fun CaptureScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         if (hasCameraPermission) {
-            CameraPreviewView(previewView = previewView, detectedCard = uiState.detectedCard, cradleState = uiState.cradleState)
+            CameraPreviewView(previewView = previewView)
         } else {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -242,7 +242,7 @@ fun CaptureScreen(
                     .border(1.dp, Color(0xFF333B49), CircleShape)
             ) {
                 Icon(
-                    if (settings.soundFeedbackEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                    if (settings.soundFeedbackEnabled) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff,
                     contentDescription = "Audio Cue",
                     tint = if (settings.soundFeedbackEnabled) Color.Black else Color.White,
                     modifier = Modifier.size(20.dp)
