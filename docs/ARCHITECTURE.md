@@ -1,37 +1,31 @@
 # Architecture
 
-## Chosen option: B — Native Capture Bridge
+## Chosen option: B+ — Native Capture Engine with 100% On-Device Offline Matching
 
-The app is a thin, high-performance capture client. The deck-lotus server keeps
-ownership of the reference index, printing/set/collector matching, inventory, decks,
-trades, and audit. This avoids porting the deck-lotus web UI and business logic to
-Android, and keeps a single source of truth for card data.
+The app operates as a standalone, ultra-fast capture and identification engine, shipping
+with the packed Scryfall 256-bit perceptual hash binary (`card-hashes.bin` — 6.3MB) and
+a high-speed indexed SQLite identity database (`card-identities.db` — 8.3MB).
+
+It performs sub-10ms card resolution on-device completely offline. The `deck-lotus` server
+is used for syncing inventory, collection modifications, deck updates, and trades.
 
 ```
-┌─ Pixel 10 Pro companion ───────────────────────────────┐
-│  CaptureService                                        │
-│   • Camera2 session: AF off, AE off, fixed focus,      │
-│     SENSOR_EXPOSURE_TIME ~1/500s, ISO locked,          │
-│     physical 1x wide sensor pinned, tone-map fixed     │
-│   • ImageReader YUV_420_888 → Y-plane (no RGBA copy)   │
-│                                                        │
-│  VisionPipeline                                        │
-│   • OpenCV: contour → perspective rectify → 680px crop │
-│   • DCT: 256-bit art hash + 64-bit frame hash          │
-│     (constants identical to deck-lotus src/shared/)    │
-│   • ML Kit Text Recognition v2 → collector block       │
-│     parse: set code, collector number, language, foil? │
-│                                                        │
-│  IngestClient  ── HTTP POST (or WS) over LAN ──────────┼──►
-└────────────────────────────────────────────────────────┘
-                                                          │
-┌─ deck-lotus server (Unraid / Docker) ──────────────────◄┘
-│  POST /api/scan/ingest  (NEW — to be built in deck-lotus)
-│   • match art hash against binary index (localIndex.js)
-│   • constrain / confirm with set + collector from OCR
-│   • return resolved printing + confidence tier
-│   • optional: commit to inventory / target deck
-└────────────────────────────────────────────────────────┘
+┌─ Pixel 10 Pro companion ───────────────────────────────────────────────────────────┐
+│  CaptureService                                                                    │
+│   • Camera2 session: AF/AE toggles, fixed focus diopters, exposure & ISO locks    │
+│   • Preview settle detection: ~150ms settled drop trigger, peripheral screen flash  │
+│                                                                                    │
+│  Vision & On-Device Matching Pipeline (100% Offline)                               │
+│   • Rectify: perspective warp to 487x680 standard frame                            │
+│   • 256-bit DCT Art Hash + 64-bit Frame Hash                                       │
+│   • ML Kit Text Recognition v2: Multi-line OCR name verification & token scoring   │
+│   • SQLite Card Database: 35,016 card names & 112,815 printings with TCGPlayer $   │
+│   • LocalCardResolver: ~10ms offline resolution with session set biasing           │
+│                                                                                    │
+│  Session Tray & Ingest Client                                                      │
+│   • 60+ FPS batch drawer with live USD Batch Total, card counts & foil toggles     │
+│   • HTTP POST to deck-lotus server for collection commits and trade batches        │
+└────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Server contract (draft — implement the mock to this shape)
