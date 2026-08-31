@@ -5,9 +5,8 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.view.PreviewView
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,6 +19,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -34,7 +35,10 @@ import com.decklotus.companion.ui.components.DiagnosticsOverlay
 import com.decklotus.companion.ui.components.ScanResultBadge
 import com.decklotus.companion.ui.theme.LotusCyan
 import com.decklotus.companion.ui.theme.LotusPurple
+import com.decklotus.companion.ui.theme.TierConfident
 import com.decklotus.companion.ui.theme.TierPickPrinting
+import com.decklotus.companion.vision.SettleState
+import kotlinx.coroutines.delay
 
 @Composable
 fun CaptureScreen(
@@ -46,7 +50,7 @@ fun CaptureScreen(
 
     val uiState by viewModel.uiState.collectAsState()
     val settings by viewModel.settingsFlow.collectAsState()
-    var showDiagnostics by remember { mutableStateOf(true) }
+    var showDiagnostics by remember { mutableStateOf(false) }
 
     var hasCameraPermission by remember {
         mutableStateOf(
@@ -72,9 +76,12 @@ fun CaptureScreen(
 
     DisposableEffect(hasCameraPermission) {
         if (hasCameraPermission) {
-            cameraController.bindCamera(previewView, settings)
+            cameraController.bindCamera(previewView, settings) {
+                viewModel.startAutoScanLoop(cameraController, previewView)
+            }
         }
         onDispose {
+            viewModel.stopAutoScanLoop()
             cameraController.shutdown()
         }
     }
@@ -82,6 +89,18 @@ fun CaptureScreen(
     LaunchedEffect(settings) {
         if (hasCameraPermission) {
             cameraController.updateManualControls(settings)
+        }
+    }
+
+    // Visual Flash Peripheral Cue Animation
+    val flashAlpha = remember { Animatable(0f) }
+    LaunchedEffect(uiState.flashPromptTrigger) {
+        if (uiState.flashPromptTrigger > 0) {
+            flashAlpha.snapTo(0.85f)
+            flashAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
+            )
         }
     }
 
@@ -99,27 +118,70 @@ fun CaptureScreen(
             }
         }
 
-        // Top Floating Price Pill (Centered)
-        val priceUsd = uiState.lastResponse?.marketPriceUsd ?: 0.26
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .statusBarsPadding()
-                .padding(top = 16.dp)
-                .background(Color(0xFF262C36).copy(alpha = 0.85f), RoundedCornerShape(20.dp))
-                .border(1.dp, Color(0xFF3B4352), RoundedCornerShape(20.dp))
-                .padding(horizontal = 18.dp, vertical = 6.dp)
-        ) {
-            Text(
-                text = String.format("$%.2f", priceUsd),
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                fontFamily = FontFamily.Monospace
+        // Peripheral Green Flash Frame Border (Signal to feed next card)
+        if (flashAlpha.value > 0.01f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(flashAlpha.value)
+                    .border(8.dp, TierConfident)
             )
         }
 
-        // Right Vertical Action Column (Floating Pills)
+        // Top Status Header: Price Pill & Cradle Feed Indicator
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(top = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Price Pill
+            val priceUsd = uiState.lastResponse?.marketPriceUsd ?: 0.26
+            Box(
+                modifier = Modifier
+                    .background(Color(0xFF262C36).copy(alpha = 0.9f), RoundedCornerShape(20.dp))
+                    .border(1.dp, Color(0xFF3B4352), RoundedCornerShape(20.dp))
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = String.format("$%.2f", priceUsd),
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+
+            // Hands-free Auto-Feed Pacing Indicator
+            if (settings.autoScanEnabled) {
+                val (cradleText, cradleColor) = when (uiState.cradleState) {
+                    SettleState.WAITING_FOR_CARD -> "DROP CARD" to LotusCyan
+                    SettleState.CARD_MOVING -> "SETTLING..." to TierPickPrinting
+                    SettleState.CARD_SETTLING -> "LOCKING..." to LotusPurple
+                    SettleState.CARD_SETTLED -> "READING..." to TierConfident
+                    SettleState.LOCKED_AFTER_SCAN -> "NEXT CARD →" to TierConfident
+                }
+
+                Box(
+                    modifier = Modifier
+                        .background(cradleColor.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
+                        .border(1.dp, cradleColor.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = cradleText,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = cradleColor,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+        }
+
+        // Right Vertical Action Bar (Floating Pills)
         Column(
             modifier = Modifier
                 .align(Alignment.TopEnd)
@@ -149,6 +211,44 @@ fun CaptureScreen(
                 }
             }
 
+            // Auto-Scan Mode Toggle Button (Hands-Free Feed)
+            IconButton(
+                onClick = { viewModel.toggleAutoScan() },
+                modifier = Modifier
+                    .size(42.dp)
+                    .background(
+                        if (settings.autoScanEnabled) TierConfident else Color(0xFF1E232B).copy(alpha = 0.9f),
+                        CircleShape
+                    )
+                    .border(1.dp, Color(0xFF333B49), CircleShape)
+            ) {
+                Icon(
+                    if (settings.autoScanEnabled) Icons.Default.AutoAwesome else Icons.Default.TouchApp,
+                    contentDescription = "Auto-Scan",
+                    tint = if (settings.autoScanEnabled) Color.Black else Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            // Audio Chime Toggle Button
+            IconButton(
+                onClick = { viewModel.toggleSound() },
+                modifier = Modifier
+                    .size(42.dp)
+                    .background(
+                        if (settings.soundFeedbackEnabled) LotusPurple else Color(0xFF1E232B).copy(alpha = 0.9f),
+                        CircleShape
+                    )
+                    .border(1.dp, Color(0xFF333B49), CircleShape)
+            ) {
+                Icon(
+                    if (settings.soundFeedbackEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                    contentDescription = "Audio Cue",
+                    tint = if (settings.soundFeedbackEnabled) Color.Black else Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
             // Torch Toggle Button
             IconButton(
                 onClick = { viewModel.toggleTorch() },
@@ -174,7 +274,7 @@ fun CaptureScreen(
                 modifier = Modifier
                     .size(42.dp)
                     .background(
-                        if (settings.autoFocus) LotusPurple else Color(0xFF1E232B).copy(alpha = 0.9f),
+                        if (settings.autoFocus) LotusCyan else Color(0xFF1E232B).copy(alpha = 0.9f),
                         CircleShape
                     )
                     .border(1.dp, Color(0xFF333B49), CircleShape)
@@ -187,7 +287,7 @@ fun CaptureScreen(
                 )
             }
 
-            // Settings Navigation Gear Button
+            // Settings Navigation Button
             IconButton(
                 onClick = onNavigateToSettings,
                 modifier = Modifier
@@ -198,7 +298,7 @@ fun CaptureScreen(
                 Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White, modifier = Modifier.size(20.dp))
             }
 
-            // Toggle Diagnostics overlay visibility
+            // Diagnostics HUD Toggle
             IconButton(
                 onClick = { showDiagnostics = !showDiagnostics },
                 modifier = Modifier
@@ -210,7 +310,7 @@ fun CaptureScreen(
             }
         }
 
-        // Top Left Diagnostics Overlay (Collapsible)
+        // Top Left Collapsible Diagnostics HUD
         AnimatedVisibility(
             visible = showDiagnostics,
             enter = fadeIn(),
@@ -239,7 +339,6 @@ fun CaptureScreen(
                 .padding(bottom = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Scan Result Card
             ScanResultBadge(
                 response = uiState.lastResponse,
                 thumbnail = uiState.rectifiedCardBitmap,
@@ -249,18 +348,22 @@ fun CaptureScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Shutter Button
+            // Shutter Button (Pulsing in Auto-Scan mode)
             FloatingActionButton(
                 onClick = { viewModel.triggerCapture(cameraController, previewView) },
                 shape = CircleShape,
-                containerColor = LotusPurple,
-                contentColor = Color.White,
+                containerColor = if (settings.autoScanEnabled) TierConfident else LotusPurple,
+                contentColor = if (settings.autoScanEnabled) Color.Black else Color.White,
                 modifier = Modifier.size(72.dp)
             ) {
                 if (uiState.isCapturing) {
-                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(34.dp))
+                    CircularProgressIndicator(color = if (settings.autoScanEnabled) Color.Black else Color.White, modifier = Modifier.size(34.dp))
                 } else {
-                    Icon(Icons.Default.Camera, contentDescription = "Capture", modifier = Modifier.size(36.dp))
+                    Icon(
+                        if (settings.autoScanEnabled) Icons.Default.AutoAwesome else Icons.Default.Camera,
+                        contentDescription = "Capture",
+                        modifier = Modifier.size(36.dp)
+                    )
                 }
             }
         }

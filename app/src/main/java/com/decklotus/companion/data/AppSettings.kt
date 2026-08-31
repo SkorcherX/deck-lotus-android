@@ -4,6 +4,8 @@ data class AppSettings(
     val baseUrl: String = "http://192.168.1.100:3000",
     val apiToken: String = "",
     val useMockServer: Boolean = true,
+    val autoScanEnabled: Boolean = true, // Continuous hands-free auto-scan
+    val soundFeedbackEnabled: Boolean = true, // Zero-latency audio chime on card ingest
     val autoFocus: Boolean = true, // Default to continuous AF for handheld testing
     val autoExposure: Boolean = true, // Default to AE for room lighting
     val torchEnabled: Boolean = false,

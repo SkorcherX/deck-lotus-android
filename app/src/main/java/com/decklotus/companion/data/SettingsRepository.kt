@@ -15,6 +15,8 @@ class SettingsRepository(private val context: Context) {
         val BASE_URL = stringPreferencesKey("base_url")
         val API_TOKEN = stringPreferencesKey("api_token")
         val USE_MOCK_SERVER = booleanPreferencesKey("use_mock_server")
+        val AUTO_SCAN = booleanPreferencesKey("auto_scan")
+        val SOUND_FEEDBACK = booleanPreferencesKey("sound_feedback")
         val AUTO_FOCUS = booleanPreferencesKey("auto_focus")
         val AUTO_EXPOSURE = booleanPreferencesKey("auto_exposure")
         val TORCH_ENABLED = booleanPreferencesKey("torch_enabled")
@@ -29,6 +31,8 @@ class SettingsRepository(private val context: Context) {
             baseUrl = prefs[Keys.BASE_URL] ?: "http://192.168.1.100:3000",
             apiToken = prefs[Keys.API_TOKEN] ?: "",
             useMockServer = prefs[Keys.USE_MOCK_SERVER] ?: true,
+            autoScanEnabled = prefs[Keys.AUTO_SCAN] ?: true,
+            soundFeedbackEnabled = prefs[Keys.SOUND_FEEDBACK] ?: true,
             autoFocus = prefs[Keys.AUTO_FOCUS] ?: true,
             autoExposure = prefs[Keys.AUTO_EXPOSURE] ?: true,
             torchEnabled = prefs[Keys.TORCH_ENABLED] ?: false,
@@ -45,6 +49,8 @@ class SettingsRepository(private val context: Context) {
                 baseUrl = prefs[Keys.BASE_URL] ?: "http://192.168.1.100:3000",
                 apiToken = prefs[Keys.API_TOKEN] ?: "",
                 useMockServer = prefs[Keys.USE_MOCK_SERVER] ?: true,
+                autoScanEnabled = prefs[Keys.AUTO_SCAN] ?: true,
+                soundFeedbackEnabled = prefs[Keys.SOUND_FEEDBACK] ?: true,
                 autoFocus = prefs[Keys.AUTO_FOCUS] ?: true,
                 autoExposure = prefs[Keys.AUTO_EXPOSURE] ?: true,
                 torchEnabled = prefs[Keys.TORCH_ENABLED] ?: false,
@@ -57,6 +63,8 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.BASE_URL] = updated.baseUrl
             prefs[Keys.API_TOKEN] = updated.apiToken
             prefs[Keys.USE_MOCK_SERVER] = updated.useMockServer
+            prefs[Keys.AUTO_SCAN] = updated.autoScanEnabled
+            prefs[Keys.SOUND_FEEDBACK] = updated.soundFeedbackEnabled
             prefs[Keys.AUTO_FOCUS] = updated.autoFocus
             prefs[Keys.AUTO_EXPOSURE] = updated.autoExposure
             prefs[Keys.TORCH_ENABLED] = updated.torchEnabled

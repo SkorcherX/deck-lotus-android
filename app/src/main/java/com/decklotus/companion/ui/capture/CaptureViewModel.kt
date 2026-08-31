@@ -15,9 +15,12 @@ import com.decklotus.companion.camera.CameraController
 import com.decklotus.companion.data.AppSettings
 import com.decklotus.companion.data.SettingsRepository
 import com.decklotus.companion.network.*
+import com.decklotus.companion.util.SoundFeedback
 import com.decklotus.companion.vision.CardGeometry
 import com.decklotus.companion.vision.CardHasher
+import com.decklotus.companion.vision.CardSettleDetector
 import com.decklotus.companion.vision.CollectorOcr
+import com.decklotus.companion.vision.SettleState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
@@ -35,7 +38,9 @@ data class CaptureUiState(
     val lastTimings: CaptureTimings? = null,
     val lastError: String? = null,
     val rectifiedCardBitmap: Bitmap? = null,
-    val sessionScanCount: Int = 0
+    val sessionScanCount: Int = 0,
+    val cradleState: SettleState = SettleState.WAITING_FOR_CARD,
+    val flashPromptTrigger: Long = 0L // Timestamp to trigger visual screen flash animation
 )
 
 class CaptureViewModel(application: Application) : AndroidViewModel(application) {
@@ -49,6 +54,10 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
     private val ingestApi = IngestApi()
     private val mockServer = MockIngestServer()
+    private val soundFeedback = SoundFeedback(application)
+    private val settleDetector = CardSettleDetector()
+
+    private var autoScanJob: Job? = null
 
     private val vibrator: Vibrator? by lazy {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -72,6 +81,47 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun startAutoScanLoop(cameraController: CameraController, previewView: PreviewView) {
+        autoScanJob?.cancel()
+        autoScanJob = viewModelScope.launch(Dispatchers.Default) {
+            while (isActive) {
+                delay(33) // ~30 FPS polling for card settle in cradle
+                val settings = settingsFlow.value
+                if (!settings.autoScanEnabled || _uiState.value.isCapturing) {
+                    continue
+                }
+
+                val frameBitmap = withContext(Dispatchers.Main) { previewView.bitmap } ?: continue
+                val settled = settleDetector.processFrame(frameBitmap)
+
+                _uiState.update { it.copy(cradleState = settleDetector.state) }
+
+                if (settled && !_uiState.value.isCapturing) {
+                    withContext(Dispatchers.Main) {
+                        triggerCapture(cameraController, previewView, isAutoTriggered = true)
+                    }
+                }
+            }
+        }
+    }
+
+    fun stopAutoScanLoop() {
+        autoScanJob?.cancel()
+        autoScanJob = null
+    }
+
+    fun toggleAutoScan() {
+        viewModelScope.launch {
+            settingsRepo.updateSettings { it.copy(autoScanEnabled = !it.autoScanEnabled) }
+        }
+    }
+
+    fun toggleSound() {
+        viewModelScope.launch {
+            settingsRepo.updateSettings { it.copy(soundFeedbackEnabled = !it.soundFeedbackEnabled) }
+        }
+    }
+
     fun toggleTorch() {
         viewModelScope.launch {
             settingsRepo.updateSettings { it.copy(torchEnabled = !it.torchEnabled) }
@@ -90,23 +140,22 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun triggerCapture(cameraController: CameraController, previewView: PreviewView? = null) {
+    fun triggerCapture(cameraController: CameraController, previewView: PreviewView? = null, isAutoTriggered: Boolean = false) {
         if (_uiState.value.isCapturing) return
 
         viewModelScope.launch {
             _uiState.update { it.copy(isCapturing = true, lastError = null) }
             val totalStart = System.nanoTime()
+            val settings = settingsFlow.value
 
             try {
-                val settings = settingsFlow.value
 
-                // 1. Instant zero-lag frame acquisition
+                // 1. Instant frame grab
                 val capStart = System.nanoTime()
                 val rawBitmap = previewView?.bitmap ?: cameraController.takePictureBitmap()
                 val capMs = (System.nanoTime() - capStart) / 1_000_000
 
                 // 2. Warp / Rectify to standard 487x680 card frame
-                val geomStart = System.nanoTime()
                 val w = rawBitmap.width.toFloat()
                 val h = rawBitmap.height.toFloat()
 
@@ -186,35 +235,49 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 )
 
                 if (netResult.response != null) {
-                    triggerHaptic(netResult.response.tier == "confident")
+                    val isConfident = netResult.response.tier == "confident"
+                    triggerHaptic(isConfident)
+                    if (settings.soundFeedbackEnabled) {
+                        if (isConfident) soundFeedback.playSuccessChime() else soundFeedback.playReviewChime()
+                    }
+                    settleDetector.markCaptured()
+
                     _uiState.update {
                         it.copy(
                             isCapturing = false,
                             lastResponse = netResult.response,
                             lastTimings = timings,
                             rectifiedCardBitmap = rectified,
-                            sessionScanCount = it.sessionScanCount + 1
+                            sessionScanCount = it.sessionScanCount + 1,
+                            flashPromptTrigger = System.currentTimeMillis(),
+                            cradleState = SettleState.LOCKED_AFTER_SCAN
                         )
                     }
                 } else {
                     triggerHaptic(isSuccess = false)
+                    if (settings.soundFeedbackEnabled) soundFeedback.playErrorTone()
+                    settleDetector.markCaptured()
+
                     _uiState.update {
                         it.copy(
                             isCapturing = false,
                             lastError = netResult.errorMessage ?: "Network request failed",
-                            lastTimings = timings
+                            lastTimings = timings,
+                            cradleState = SettleState.WAITING_FOR_CARD
                         )
                     }
                 }
 
             } catch (e: Exception) {
                 triggerHaptic(isSuccess = false)
+                if (settings.soundFeedbackEnabled) soundFeedback.playErrorTone()
                 val totalMs = (System.nanoTime() - totalStart) / 1_000_000
                 _uiState.update {
                     it.copy(
                         isCapturing = false,
                         lastError = e.localizedMessage ?: e.javaClass.simpleName,
-                        lastTimings = CaptureTimings(totalMs = totalMs)
+                        lastTimings = CaptureTimings(totalMs = totalMs),
+                        cradleState = SettleState.WAITING_FOR_CARD
                     )
                 }
             }
@@ -225,19 +288,21 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         val vib = vibrator ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val effect = if (isSuccess) {
-                VibrationEffect.createOneShot(30, VibrationEffect.DEFAULT_AMPLITUDE)
+                VibrationEffect.createOneShot(35, VibrationEffect.DEFAULT_AMPLITUDE)
             } else {
                 VibrationEffect.createWaveform(longArrayOf(0, 50, 50, 50), -1)
             }
             vib.vibrate(effect)
         } else {
             @Suppress("DEPRECATION")
-            vib.vibrate(if (isSuccess) 30 else 100)
+            vib.vibrate(if (isSuccess) 35 else 100)
         }
     }
 
     override fun onCleared() {
         super.onCleared()
+        stopAutoScanLoop()
+        soundFeedback.release()
         mockServer.stop()
     }
 }

@@ -54,7 +54,61 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            // Section 1: Server Connection
+            // Section 1: Feeder & Automation
+            Text(
+                text = "FEEDER & SCANNER PACING",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = TierConfident,
+                fontFamily = FontFamily.Monospace
+            )
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    // Continuous Auto-Scan Switch
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Continuous Hands-Free Scan", fontWeight = FontWeight.Medium)
+                            Text("Detects card settle in cradle and ingests automatically", fontSize = 12.sp, color = TextSecondary)
+                        }
+                        Switch(
+                            checked = settings.autoScanEnabled,
+                            onCheckedChange = { checked ->
+                                viewModel.updateSettings { it.copy(autoScanEnabled = checked) }
+                            }
+                        )
+                    }
+
+                    HorizontalDivider(color = SurfaceBorder)
+
+                    // Sound Cue Switch
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Audio Feed Prompts", fontWeight = FontWeight.Medium)
+                            Text("Chimes on card ingest to prompt feeding the next card", fontSize = 12.sp, color = TextSecondary)
+                        }
+                        Switch(
+                            checked = settings.soundFeedbackEnabled,
+                            onCheckedChange = { checked ->
+                                viewModel.updateSettings { it.copy(soundFeedbackEnabled = checked) }
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Section 2: Server Connection
             Text(
                 text = "SERVER INGEST CONFIGURATION",
                 fontSize = 12.sp,
@@ -119,7 +173,7 @@ fun SettingsScreen(
                 }
             }
 
-            // Section 2: Camera Manual Controls
+            // Section 3: Camera Manual Controls
             Text(
                 text = "OPTICAL CONTROLS & RIG LOCKS",
                 fontSize = 12.sp,
