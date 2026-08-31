@@ -32,30 +32,6 @@ object CollectorOcr {
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
 
-    fun cropCollectorRegion(rectifiedCard: Bitmap): Bitmap {
-        val width = rectifiedCard.width
-        val height = rectifiedCard.height
-
-        val x0 = max(0, (0.02 * width).roundToInt())
-        val y0 = max(0, (0.86 * height).roundToInt())
-        val cw = min(width - x0, (0.60 * width).roundToInt())
-        val ch = min(height - y0, (0.13 * height).roundToInt())
-
-        return Bitmap.createBitmap(rectifiedCard, x0, y0, max(1, cw), max(1, ch))
-    }
-
-    fun cropTitleRegion(rectifiedCard: Bitmap): Bitmap {
-        val width = rectifiedCard.width
-        val height = rectifiedCard.height
-
-        val x0 = max(0, (0.05 * width).roundToInt())
-        val y0 = max(0, (0.03 * height).roundToInt())
-        val cw = min(width - x0, (0.80 * width).roundToInt())
-        val ch = min(height - y0, (0.10 * height).roundToInt())
-
-        return Bitmap.createBitmap(rectifiedCard, x0, y0, max(1, cw), max(1, ch))
-    }
-
     suspend fun recognizeText(bitmap: Bitmap): Text = suspendCancellableCoroutine { continuation ->
         val inputImage = InputImage.fromBitmap(bitmap, 0)
         recognizer.process(inputImage)
@@ -67,31 +43,39 @@ object CollectorOcr {
             }
     }
 
-    fun parseFullCardOcr(
-        titleText: Text,
-        collectorText: Text,
-        fullImageText: Text? = null
-    ): ParsedCardOcr {
-        val titleLines = titleText.textBlocks.flatMap { it.lines.map { l -> l.text.trim() } }.filter { it.isNotBlank() }
-        val collectorLines = collectorText.textBlocks.flatMap { it.lines.map { l -> l.text.trim() } }.filter { it.isNotBlank() }
-        val allLines = (titleLines + collectorLines + (fullImageText?.textBlocks?.flatMap { it.lines.map { l -> l.text.trim() } } ?: emptyList())).distinct()
+    /**
+     * Parse full card OCR directly from full rectified card text recognition.
+     */
+    fun parseFromVisionText(visionText: Text): ParsedCardOcr {
+        val allLines = visionText.textBlocks.flatMap { it.lines.map { l -> l.text.trim() } }.filter { it.isNotBlank() }
 
         if (allLines.isEmpty()) {
             return ParsedCardOcr()
         }
 
-        // Extract card name from the title header lines
-        val rawName = titleLines.firstOrNull { it.length >= 3 && !it.startsWith("{") && !it.all { c -> c.isDigit() } }
-            ?: allLines.firstOrNull { it.length >= 3 && !it.contains("•") && !it.contains("/") && !it.all { c -> c.isDigit() } }
+        // 1. Find title: Top-most text block (excluding pure numbers/symbols)
+        val nameCandidate = allLines.firstOrNull { line ->
+            line.length >= 3 &&
+            !line.startsWith("{") &&
+            !line.contains("•") &&
+            !line.contains("/") &&
+            !line.all { it.isDigit() } &&
+            !line.startsWith("Instant", ignoreCase = true) &&
+            !line.startsWith("Sorcery", ignoreCase = true) &&
+            !line.startsWith("Creature", ignoreCase = true) &&
+            !line.startsWith("Enchantment", ignoreCase = true) &&
+            !line.startsWith("Artifact", ignoreCase = true)
+        }
 
-        val cleanName = rawName?.replace(Regex("""[0-9/\{\}]"""), "")?.trim()?.ifBlank { null }
+        val cleanName = nameCandidate?.replace(Regex("""[0-9/\{\}]"""), "")?.trim()?.ifBlank { null }
 
-        val parsedCollector = parseRawCollectorLines(collectorLines.ifEmpty { allLines })
+        // 2. Find collector block (bottom lines)
+        val parsedCollector = parseRawCollectorLines(allLines)
 
         val hasValidData = cleanName != null || parsedCollector.collectorNumber != null || parsedCollector.setCode != null
         val confidence = when {
             cleanName != null && parsedCollector.collectorNumber != null -> 0.95f
-            cleanName != null || parsedCollector.collectorNumber != null -> 0.70f
+            cleanName != null || parsedCollector.collectorNumber != null -> 0.75f
             hasValidData -> 0.40f
             else -> 0.0f
         }
@@ -130,7 +114,6 @@ object CollectorOcr {
             if (setMatch != null && setCode == null) {
                 setCode = setMatch.groupValues[1].uppercase()
                 language = setMatch.groupValues[2].uppercase()
-                continue
             }
 
             val numMatch = collectorRegex.find(clean)

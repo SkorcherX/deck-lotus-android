@@ -210,13 +210,8 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     }
 
                     val ocrDeferred = async(Dispatchers.Default) {
-                        val titleCrop = CollectorOcr.cropTitleRegion(rectified)
-                        val collectorCrop = CollectorOcr.cropCollectorRegion(rectified)
-
-                        val titleTask = async { CollectorOcr.recognizeText(titleCrop) }
-                        val collectorTask = async { CollectorOcr.recognizeText(collectorCrop) }
-
-                        CollectorOcr.parseFullCardOcr(titleTask.await(), collectorTask.await())
+                        val visionText = CollectorOcr.recognizeText(rectified)
+                        CollectorOcr.parseFromVisionText(visionText)
                     }
 
                     hashDeferred.await() to ocrDeferred.await()
