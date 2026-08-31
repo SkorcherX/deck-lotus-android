@@ -66,7 +66,7 @@ object CollectorOcr {
         val maxBottom = allLinesWithBoxes.mapNotNull { it.box?.bottom }.maxOrNull() ?: 680
         val cardHeight = if (maxBottom > 100) maxBottom else 680
 
-        // 1. Top Zone (Top 25% of card): Card Title
+        // 1. Top Zone (Top 28% of card): Card Title
         val titleLines = allLinesWithBoxes.filter { item ->
             val top = item.box?.top ?: 0
             top < cardHeight * 0.28f
@@ -83,18 +83,20 @@ object CollectorOcr {
             !line.startsWith("Creature", ignoreCase = true) &&
             !line.startsWith("Enchantment", ignoreCase = true) &&
             !line.startsWith("Artifact", ignoreCase = true) &&
+            !line.startsWith("Planeswalker", ignoreCase = true) &&
+            !line.startsWith("Battle", ignoreCase = true) &&
             !line.startsWith("Land", ignoreCase = true)
         } ?: allLinesWithBoxes.firstOrNull()?.text
 
         val cleanName = nameCandidate?.replace(Regex("""[0-9/\{\}]"""), "")?.trim()?.ifBlank { null }
 
-        // 2. Bottom Zone (Bottom 30% of card): Collector Block
-        val collectorLines = allLinesWithBoxes.filter { item ->
+        // 2. Bottom Zone (Bottom 32% of card): Collector Block
+        val collectorLinesWithBoxes = allLinesWithBoxes.filter { item ->
             val top = item.box?.top ?: cardHeight
-            top >= cardHeight * 0.70f
-        }.map { it.text }
+            top >= cardHeight * 0.68f
+        }
 
-        // If bottom zone was empty, try all lines as fallback
+        val collectorLines = collectorLinesWithBoxes.map { it.text }
         val effectiveCollectorLines = collectorLines.ifEmpty { allLinesWithBoxes.map { it.text } }
         val parsedCollector = parseRawCollectorLines(effectiveCollectorLines)
 
@@ -136,12 +138,23 @@ object CollectorOcr {
 
         // Pattern 1: Set • Lang (e.g. "SOA • EN", "FDN · EN", "WOE - EN", "MH3/EN", "BLB | EN", "OTJ I EN", "SOA EN")
         val setLangRegex = Regex("""\b([A-Za-z0-9]{3,4})\s*[\u2022\u2219\u00B7\u25CF\u25AA\.\-\/\\\|I\s]\s*([A-Za-z]{2,3})\b""", RegexOption.IGNORE_CASE)
-        // Pattern 2: Collector number (e.g. "0045", "045/281", "U 0045", "R 0124", "124/281")
+        // Pattern 2: Collector number (e.g. "0045", "045/281", "U 0045", "R 0124", "124/281", "018", "018/281")
         val collectorRegex = Regex("""\b(?:U|R|M|C|L|T|S|P)?\s*(\d{1,4}[A-Za-z]?)(?:\s*\/\s*\d{1,4})?\b""", RegexOption.IGNORE_CASE)
 
         val nonSetTokens = setOf("THE", "AND", "NOT", "FOR", "ALL", "SET", "NEW", "CARD", "MTG", "DECK", "WOTC", "TM", "HAS", "CAN", "YOU", "GET", "ONE", "TWO")
 
-        for (line in lines) {
+        // Filter out copyright lines so dates like 1993-2024 or 2018 never get parsed as collector numbers
+        val filteredLines = lines.filterNot { line ->
+            line.contains("Wizards", ignoreCase = true) ||
+            line.contains("Coast", ignoreCase = true) ||
+            line.contains("TM & ©", ignoreCase = true) ||
+            line.contains("©", ignoreCase = true) ||
+            line.contains("Illustrated by", ignoreCase = true)
+        }
+
+        val linesToInspect = filteredLines.ifEmpty { lines }
+
+        for (line in linesToInspect) {
             val clean = line.replace("★", "").replace("☆", "").trim()
 
             // Try set • lang match
@@ -157,12 +170,14 @@ object CollectorOcr {
                 }
             }
 
-            // Try collector number match
+            // Try collector number match (ignoring 4-digit years like 1990-2030)
             if (collectorNumber == null) {
                 val numMatch = collectorRegex.find(clean)
                 if (numMatch != null) {
                     val candidate = numMatch.groupValues[1]
-                    if (candidate.any { it.isDigit() } && !candidate.startsWith("202")) { // Avoid matching copyright years like 2024
+                    val intVal = candidate.filter { it.isDigit() }.toIntOrNull() ?: -1
+                    val isYear = intVal in 1990..2030 && candidate.length == 4
+                    if (candidate.any { it.isDigit() } && !isYear) {
                         collectorNumber = candidate
                     }
                 }
@@ -172,8 +187,7 @@ object CollectorOcr {
         // Pattern 3: Fallback standalone 3-uppercase-letter code in the bottom block
         if (setCode == null) {
             val tokenRegex = Regex("""\b([A-Z0-9]{3,4})\b""")
-            for (line in lines) {
-                if (line.contains("Wizards", ignoreCase = true) || line.contains("Coast", ignoreCase = true)) continue
+            for (line in linesToInspect) {
                 for (match in tokenRegex.findAll(line)) {
                     val token = match.groupValues[1]
                     if (token !in nonSetTokens && token.any { it.isLetter() }) {
