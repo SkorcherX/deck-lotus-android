@@ -44,6 +44,82 @@ class CardDatabaseHelper(private val context: Context) {
         db = SQLiteDatabase.openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
     }
 
+    fun findCardsByName(name: String): List<CardIdentity> {
+        val database = db ?: return emptyList()
+        val clean = name.trim()
+        if (clean.length < 2) return emptyList()
+
+        // 1. Exact match (case-insensitive)
+        var cursor = database.rawQuery(
+            "SELECT row_id, name, set_code, collector_number, price_cents FROM printings WHERE name = ? COLLATE NOCASE LIMIT 25",
+            arrayOf(clean)
+        )
+        val list = mutableListOf<CardIdentity>()
+        try {
+            while (cursor.moveToNext()) {
+                list.add(
+                    CardIdentity(
+                        rowId = cursor.getInt(0),
+                        name = cursor.getString(1),
+                        setCode = cursor.getString(2),
+                        collectorNumber = cursor.getString(3),
+                        priceCents = cursor.getInt(4)
+                    )
+                )
+            }
+        } finally {
+            cursor.close()
+        }
+
+        if (list.isNotEmpty()) return list
+
+        // 2. Prefix match
+        cursor = database.rawQuery(
+            "SELECT row_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 25",
+            arrayOf("$clean%")
+        )
+        try {
+            while (cursor.moveToNext()) {
+                list.add(
+                    CardIdentity(
+                        rowId = cursor.getInt(0),
+                        name = cursor.getString(1),
+                        setCode = cursor.getString(2),
+                        collectorNumber = cursor.getString(3),
+                        priceCents = cursor.getInt(4)
+                    )
+                )
+            }
+        } finally {
+            cursor.close()
+        }
+
+        if (list.isNotEmpty()) return list
+
+        // 3. Substring match
+        cursor = database.rawQuery(
+            "SELECT row_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 25",
+            arrayOf("%$clean%")
+        )
+        try {
+            while (cursor.moveToNext()) {
+                list.add(
+                    CardIdentity(
+                        rowId = cursor.getInt(0),
+                        name = cursor.getString(1),
+                        setCode = cursor.getString(2),
+                        collectorNumber = cursor.getString(3),
+                        priceCents = cursor.getInt(4)
+                    )
+                )
+            }
+        } finally {
+            cursor.close()
+        }
+
+        return list
+    }
+
     fun getIdentitiesForRows(rowIds: List<Int>): Map<Int, CardIdentity> {
         val database = db ?: return emptyMap()
         if (rowIds.isEmpty()) return emptyMap()
@@ -67,51 +143,6 @@ class CardDatabaseHelper(private val context: Context) {
         }
 
         return result
-    }
-
-    fun findByOcr(name: String?, setCode: String?, collector: String?): List<CardIdentity> {
-        val database = db ?: return emptyMap<Int, CardIdentity>().values.toList()
-        if (name == null && setCode == null && collector == null) return emptyList()
-
-        val conditions = mutableListOf<String>()
-        val args = mutableListOf<String>()
-
-        if (!setCode.isNullOrBlank()) {
-            conditions.add("set_code = ?")
-            args.add(setCode.uppercase())
-        }
-        if (!collector.isNullOrBlank()) {
-            conditions.add("collector_number = ?")
-            args.add(collector)
-        }
-        if (!name.isNullOrBlank() && conditions.isEmpty()) {
-            conditions.add("name LIKE ?")
-            args.add("%$name%")
-        }
-
-        if (conditions.isEmpty()) return emptyList()
-
-        val query = "SELECT row_id, name, set_code, collector_number, price_cents FROM printings WHERE " + conditions.joinToString(" AND ") + " LIMIT 10"
-        val cursor = database.rawQuery(query, args.toTypedArray())
-        val list = mutableListOf<CardIdentity>()
-
-        try {
-            while (cursor.moveToNext()) {
-                list.add(
-                    CardIdentity(
-                        rowId = cursor.getInt(0),
-                        name = cursor.getString(1),
-                        setCode = cursor.getString(2),
-                        collectorNumber = cursor.getString(3),
-                        priceCents = cursor.getInt(4)
-                    )
-                )
-            }
-        } finally {
-            cursor.close()
-        }
-
-        return list
     }
 
     fun close() {

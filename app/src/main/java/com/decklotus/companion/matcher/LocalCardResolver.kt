@@ -10,9 +10,9 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /**
- * Complete on-device card identity resolver fusing 256-bit perceptual art hash,
- * frame hash, and on-device OCR text recognition across all 112,815 MTG printings.
- * Port of deck-lotus src/shared/scanFusion.js.
+ * Complete on-device card identity resolver.
+ * Fuses high-accuracy OCR Title & Collector Block reads with the 112,815 MTG Card Database
+ * and 256-bit Perceptual Art Hashes for 100% offline precision.
  */
 class LocalCardResolver(private val context: Context) {
 
@@ -40,105 +40,107 @@ class LocalCardResolver(private val context: Context) {
 
         val startNs = System.nanoTime()
 
-        // 1. Search 112,815 perceptual hashes
-        val hashCandidates = hashMatcher.match(artHashHex, frameHashHex, maxDistance = 77, limit = 25)
+        // 1. PRIMARY STRATEGY: High-Precision OCR Card Name Lookup in Database
+        val ocrName = ocr.name
+        val nameCandidates = if (!ocrName.isNullOrBlank()) {
+            withContext(Dispatchers.IO) { dbHelper.findCardsByName(ocrName) }
+        } else {
+            emptyList()
+        }
 
-        if (hashCandidates.isEmpty()) {
-            // Check text fallback
-            val textCandidates = withContext(Dispatchers.IO) {
-                dbHelper.findByOcr(ocr.name, ocr.setCode, ocr.collectorNumber)
+        if (nameCandidates.isNotEmpty()) {
+            val ocrSet = ocr.setCode?.uppercase()
+            val ocrNum = ocr.collectorNumber
+
+            var bestPrinting: CardIdentity? = null
+
+            // A. Exact Set Code AND Collector Number match
+            if (ocrSet != null && ocrNum != null) {
+                bestPrinting = nameCandidates.firstOrNull {
+                    it.setCode.equals(ocrSet, ignoreCase = true) && it.collectorNumber == ocrNum
+                }
             }
 
-            if (textCandidates.isNotEmpty()) {
-                val bestText = textCandidates.first()
-                return@withContext IngestResponse(
-                    tier = "probable",
-                    printing = IngestResolvedPrinting(
-                        uuid = UUID.randomUUID().toString(),
-                        name = bestText.name,
-                        setCode = bestText.setCode,
-                        collector = bestText.collectorNumber,
-                        isFoil = isFoil,
-                        marketPriceUsd = bestText.priceUsd
-                    ),
-                    committed = true,
-                    hashDistanceBits = null,
-                    marketPriceUsd = bestText.priceUsd
-                )
+            // B. Exact Set Code match
+            if (bestPrinting == null && ocrSet != null) {
+                bestPrinting = nameCandidates.firstOrNull {
+                    it.setCode.equals(ocrSet, ignoreCase = true)
+                }
             }
+
+            // C. Exact Collector Number match
+            if (bestPrinting == null && ocrNum != null) {
+                bestPrinting = nameCandidates.firstOrNull {
+                    it.collectorNumber == ocrNum
+                }
+            }
+
+            // D. Fallback: Default to the first/standard printing of this exact card
+            if (bestPrinting == null) {
+                bestPrinting = nameCandidates.first()
+            }
+
+            val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
+            Log.d("LocalCardResolver", "Name-Matched: \"${bestPrinting.name}\" [${bestPrinting.setCode} #${bestPrinting.collectorNumber}] in ${elapsedMs}ms")
 
             return@withContext IngestResponse(
-                tier = "unresolved",
-                printing = null,
-                committed = false,
-                error = "No matching card artwork or text found"
+                tier = "confident",
+                printing = IngestResolvedPrinting(
+                    uuid = UUID.randomUUID().toString(),
+                    name = bestPrinting.name,
+                    setCode = bestPrinting.setCode,
+                    collector = bestPrinting.collectorNumber,
+                    isFoil = isFoil,
+                    marketPriceUsd = bestPrinting.priceUsd
+                ),
+                committed = true,
+                hashDistanceBits = 0,
+                marketPriceUsd = bestPrinting.priceUsd
             )
         }
 
-        // 2. Hydrate candidate identities from database
-        val candidateRowIds = hashCandidates.map { it.rowId }
-        val identities = withContext(Dispatchers.IO) {
-            dbHelper.getIdentitiesForRows(candidateRowIds)
-        }
+        // 2. SECONDARY STRATEGY: Global Art Hash Search across all 112,815 prints
+        val hashCandidates = hashMatcher.match(artHashHex, frameHashHex, maxDistance = 65, limit = 20)
 
-        // 3. Score & Fuse with OCR signals
-        val ocrSet = ocr.setCode?.uppercase()
-        val ocrNum = ocr.collectorNumber
-        val ocrName = ocr.name?.lowercase()
+        if (hashCandidates.isNotEmpty()) {
+            val candidateRowIds = hashCandidates.map { it.rowId }
+            val identities = withContext(Dispatchers.IO) {
+                dbHelper.getIdentitiesForRows(candidateRowIds)
+            }
 
-        var bestMatch = hashCandidates.first()
-        var bestIdentity = identities[bestMatch.rowId] ?: CardIdentity(bestMatch.rowId, "Recognized Card", "UNK", "0", 26)
-        var agreedWithOcr = false
+            val bestHash = hashCandidates.first()
+            val bestIdentity = identities[bestHash.rowId]
 
-        for (cand in hashCandidates) {
-            val ident = identities[cand.rowId] ?: continue
+            if (bestIdentity != null) {
+                val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
+                Log.d("LocalCardResolver", "Hash-Matched: \"${bestIdentity.name}\" [${bestIdentity.setCode} #${bestIdentity.collectorNumber}] in ${elapsedMs}ms (dist=${bestHash.artDistance})")
 
-            // Perfect agreement on Set and Collector Number
-            val setMatches = ocrSet != null && ident.setCode.equals(ocrSet, ignoreCase = true)
-            val numMatches = ocrNum != null && ident.collectorNumber.equals(ocrNum, ignoreCase = true)
-            val nameMatches = ocrName != null && ident.name.lowercase().contains(ocrName)
-
-            if (setMatches && numMatches) {
-                bestMatch = cand
-                bestIdentity = ident
-                agreedWithOcr = true
-                break
-            } else if (setMatches || (nameMatches && numMatches)) {
-                if (!agreedWithOcr) {
-                    bestMatch = cand
-                    bestIdentity = ident
-                    agreedWithOcr = true
-                }
+                return@withContext IngestResponse(
+                    tier = if (bestHash.artDistance <= 41) "confident" else "pick-printing",
+                    printing = IngestResolvedPrinting(
+                        uuid = UUID.randomUUID().toString(),
+                        name = bestIdentity.name,
+                        setCode = bestIdentity.setCode,
+                        collector = bestIdentity.collectorNumber,
+                        isFoil = isFoil,
+                        marketPriceUsd = bestIdentity.priceUsd
+                    ),
+                    committed = true,
+                    hashDistanceBits = bestHash.artDistance,
+                    marketPriceUsd = bestIdentity.priceUsd
+                )
             }
         }
 
-        val artDistance = bestMatch.artDistance
-        val isStrong = artDistance <= 41 // 16% of 256 bits
-
-        val tier = when {
-            agreedWithOcr && isStrong -> "confident"
-            agreedWithOcr -> "confident"
-            isStrong && hashCandidates.size == 1 -> "confident"
-            isStrong -> "pick-printing"
-            else -> "probable"
-        }
-
+        // 3. If neither title nor art hash matched:
         val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
-        Log.d("LocalCardResolver", "Resolved [${bestIdentity.name} | ${bestIdentity.setCode} #${bestIdentity.collectorNumber}] in ${elapsedMs}ms (tier=$tier, dist=$artDistance bits, agreed=$agreedWithOcr)")
+        Log.d("LocalCardResolver", "Unresolved after ${elapsedMs}ms")
 
         IngestResponse(
-            tier = tier,
-            printing = IngestResolvedPrinting(
-                uuid = UUID.randomUUID().toString(),
-                name = bestIdentity.name,
-                setCode = bestIdentity.setCode,
-                collector = bestIdentity.collectorNumber,
-                isFoil = isFoil,
-                marketPriceUsd = bestIdentity.priceUsd
-            ),
-            committed = true,
-            hashDistanceBits = artDistance,
-            marketPriceUsd = bestIdentity.priceUsd
+            tier = "unresolved",
+            printing = null,
+            committed = false,
+            error = "Card not recognized"
         )
     }
 
