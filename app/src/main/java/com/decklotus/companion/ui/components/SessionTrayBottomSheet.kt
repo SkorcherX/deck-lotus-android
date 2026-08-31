@@ -34,12 +34,14 @@ fun SessionTrayBottomSheet(
     totalCount: Int,
     totalValueUsd: Double,
     totalFoils: Int,
+    isCommitting: Boolean = false,
     onDismiss: () -> Unit,
     onIncrement: (String) -> Unit,
     onDecrement: (String) -> Unit,
     onToggleFoil: (String) -> Unit,
     onRemove: (String) -> Unit,
-    onClearAll: () -> Unit
+    onClearAll: () -> Unit,
+    onCommitToCollection: () -> Unit = {}
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -99,20 +101,20 @@ fun SessionTrayBottomSheet(
                 SummaryStatCard(
                     title = "BATCH VALUE",
                     value = String.format("$%.2f", totalValueUsd),
-                    accentColor = Color(0xFF2EA043),
-                    modifier = Modifier.weight(1.3f)
+                    accentColor = LotusCyan,
+                    modifier = Modifier.weight(1f)
                 )
                 SummaryStatCard(
                     title = "CARDS",
                     value = "$totalCount",
-                    accentColor = LotusCyan,
-                    modifier = Modifier.weight(0.85f)
+                    accentColor = TierConfident,
+                    modifier = Modifier.weight(1f)
                 )
                 SummaryStatCard(
                     title = "FOILS",
                     value = "$totalFoils",
-                    accentColor = TierPickPrinting,
-                    modifier = Modifier.weight(0.85f)
+                    accentColor = TierConflict,
+                    modifier = Modifier.weight(1f)
                 )
             }
 
@@ -123,14 +125,14 @@ fun SessionTrayBottomSheet(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(200.dp),
+                        .height(160.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
                             Icons.Default.Inbox,
                             contentDescription = null,
-                            tint = Color(0xFF3B4352),
+                            tint = Color(0xFF4C566A),
                             modifier = Modifier.size(48.dp)
                         )
                         Spacer(modifier = Modifier.height(8.dp))
@@ -150,7 +152,7 @@ fun SessionTrayBottomSheet(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 440.dp),
+                        .heightIn(max = 380.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(cards, key = { it.id }) { item ->
@@ -161,6 +163,29 @@ fun SessionTrayBottomSheet(
                             onToggleFoil = { onToggleFoil(item.id) },
                             onRemove = { onRemove(item.id) }
                         )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Commit to Collection Button
+                Button(
+                    onClick = onCommitToCollection,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = TierConfident),
+                    enabled = !isCommitting
+                ) {
+                    if (isCommitting) {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Syncing to Server...", fontWeight = FontWeight.Bold)
+                    } else {
+                        Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Commit $totalCount Cards to Collection (${String.format("$%.2f", totalValueUsd)})", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     }
                 }
             }
@@ -178,20 +203,20 @@ private fun SummaryStatCard(
     Column(
         modifier = modifier
             .background(Color(0xFF1E232B), RoundedCornerShape(12.dp))
-            .border(1.dp, Color(0xFF2D333F), RoundedCornerShape(12.dp))
-            .padding(vertical = 10.dp, horizontal = 12.dp)
+            .border(1.dp, Color(0xFF2E3440), RoundedCornerShape(12.dp))
+            .padding(12.dp)
     ) {
         Text(
             text = title,
-            fontSize = 9.sp,
+            fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
-            color = TextSecondary,
+            color = Color(0xFF7A8499),
             fontFamily = FontFamily.Monospace
         )
-        Spacer(modifier = Modifier.height(2.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = value,
-            fontSize = 16.sp,
+            fontSize = 18.sp,
             fontWeight = FontWeight.Bold,
             color = accentColor,
             fontFamily = FontFamily.Monospace
@@ -207,41 +232,48 @@ private fun ScannedCardRowItem(
     onToggleFoil: () -> Unit,
     onRemove: () -> Unit
 ) {
-    val imgBitmap = remember(item.id, item.thumbnail) {
-        item.thumbnail?.asImageBitmap()
+    val tierBorderColor = when (item.tier) {
+        "confident" -> TierConfident
+        "pick-printing" -> TierPickPrinting
+        "conflict" -> TierConflict
+        else -> TierUnsure
     }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF1B1F27), RoundedCornerShape(14.dp))
-            .border(1.dp, Color(0xFF282E3A), RoundedCornerShape(14.dp))
+            .background(Color(0xFF1B2028), RoundedCornerShape(12.dp))
+            .border(1.dp, Color(0xFF2E3440), RoundedCornerShape(12.dp))
             .padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Thumbnail
-        if (imgBitmap != null) {
-            Image(
-                bitmap = imgBitmap,
-                contentDescription = null,
-                modifier = Modifier
-                    .size(width = 38.dp, height = 54.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .border(1.dp, Color(0xFF3B4352), RoundedCornerShape(4.dp)),
-                contentScale = ContentScale.Crop
-            )
-        } else {
-            Box(
-                modifier = Modifier
-                    .size(width = 38.dp, height = 54.dp)
-                    .background(Color(0xFF212630), RoundedCornerShape(4.dp))
-            )
+        // Thumbnail Image
+        Box(
+            modifier = Modifier
+                .size(width = 46.dp, height = 64.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .border(1.dp, tierBorderColor, RoundedCornerShape(6.dp))
+                .background(Color(0xFF111318)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (item.thumbnail != null) {
+                Image(
+                    bitmap = item.thumbnail.asImageBitmap(),
+                    contentDescription = item.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Icon(Icons.Default.Image, contentDescription = null, tint = Color(0xFF4C566A), modifier = Modifier.size(24.dp))
+            }
         }
 
-        Spacer(modifier = Modifier.width(10.dp))
-
-        // Center Details (Name, Set, Foil Badge, Price)
-        Column(modifier = Modifier.weight(1f)) {
+        // Details (Name, Set Code, Collector #, Unit & Total Price)
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
             Text(
                 text = item.name,
                 fontSize = 14.sp,
@@ -250,50 +282,56 @@ private fun ScannedCardRowItem(
                 maxLines = 1
             )
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // Set Code Tag
+                Surface(
+                    color = Color(0xFF262C36),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Text(
+                        text = item.setCode,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = LotusCyan,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
+                }
 
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                // Set & Collector Badge
+                // Collector Number Tag
                 Text(
-                    text = "${item.setCode} #${item.collectorNumber}",
+                    text = "#${item.collectorNumber}",
                     fontSize = 11.sp,
-                    color = TextSecondary,
+                    color = Color(0xFF9AA5B8),
                     fontFamily = FontFamily.Monospace
                 )
 
-                // Foil Toggle Badge
-                Box(
-                    modifier = Modifier
-                        .clickable { onToggleFoil() }
-                        .background(
-                            if (item.isFoil) TierPickPrinting.copy(alpha = 0.25f) else Color(0xFF262C36),
-                            RoundedCornerShape(4.dp)
-                        )
-                        .border(
-                            1.dp,
-                            if (item.isFoil) TierPickPrinting.copy(alpha = 0.6f) else Color(0xFF3B4352),
-                            RoundedCornerShape(4.dp)
-                        )
-                        .padding(horizontal = 6.dp, vertical = 1.dp)
+                // Foil Pill Toggle
+                Surface(
+                    color = if (item.isFoil) Color(0xFF3B2F10) else Color(0xFF20252D),
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier.clickable { onToggleFoil() }
                 ) {
                     Text(
                         text = if (item.isFoil) "★ FOIL" else "NORMAL",
-                        fontSize = 9.sp,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (item.isFoil) TierPickPrinting else TextMuted,
-                        fontFamily = FontFamily.Monospace
+                        color = if (item.isFoil) Color(0xFFFFD700) else Color(0xFF7A8499),
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // Price readout
+            // Price Line
             Text(
-                text = String.format("$%.2f", item.marketPriceUsd) + if (item.quantity > 1) " (ea) • " + String.format("$%.2f", item.totalItemPriceUsd) else "",
+                text = "${String.format("$%.2f", item.marketPriceUsd)} each • Total: ${String.format("$%.2f", item.totalItemPriceUsd)}",
                 fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF2EA043),
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF9ECE6A),
                 fontFamily = FontFamily.Monospace
             )
         }

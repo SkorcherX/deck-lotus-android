@@ -7,6 +7,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -15,6 +19,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.decklotus.companion.network.ServerConnectionStatus
+import com.decklotus.companion.ui.components.CloudflarePortalDialog
 import com.decklotus.companion.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -24,9 +30,19 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit
 ) {
     val settings by viewModel.settings.collectAsState()
+    val connStatus by viewModel.connectionStatus.collectAsState()
+    val isPortalOpen by viewModel.isPortalOpen.collectAsState()
 
     var baseUrl by remember(settings.baseUrl) { mutableStateOf(settings.baseUrl) }
     var token by remember(settings.apiToken) { mutableStateOf(settings.apiToken) }
+
+    if (isPortalOpen) {
+        CloudflarePortalDialog(
+            url = baseUrl.ifBlank { "https://deck-lotus.example.com" },
+            onDismiss = { viewModel.closeCloudflarePortal() },
+            onAuthSuccess = { viewModel.onCloudflareAuthSuccess() }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -108,9 +124,9 @@ fun SettingsScreen(
                 }
             }
 
-            // Section 2: Server Connection
+            // Section 2: Server Connection & Cloudflare Tunnel
             Text(
-                text = "SERVER INGEST CONFIGURATION",
+                text = "SERVER & CLOUDFLARE TUNNEL",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 color = LotusCyan,
@@ -122,21 +138,88 @@ fun SettingsScreen(
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("On-Device Offline Matching", fontWeight = FontWeight.Medium)
-                            Text("Instant ~10ms matching against all 112,815 cards using packed Scryfall hashes", fontSize = 12.sp, color = TextSecondary)
-                        }
-                        Switch(
-                            checked = settings.useMockServer,
-                            onCheckedChange = { checked ->
-                                viewModel.updateSettings { it.copy(useMockServer = checked) }
+                    // Connection Status Pill Banner
+                    when (val s = connStatus) {
+                        is ServerConnectionStatus.Connected -> {
+                            Surface(
+                                color = TierConfident.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = TierConfident, modifier = Modifier.size(18.dp))
+                                    Column {
+                                        Text("Connected to Deck Lotus (${s.latencyMs}ms)", color = TierConfident, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        s.username?.let { Text("Authenticated as $it", color = TextSecondary, fontSize = 11.sp) }
+                                    }
+                                }
                             }
-                        )
+                        }
+                        is ServerConnectionStatus.CloudflareAuthRequired -> {
+                            Surface(
+                                color = TierConflict.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.Lock, contentDescription = null, tint = TierConflict, modifier = Modifier.size(18.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Cloudflare Access Login Required", color = TierConflict, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        Text("Session expired or new device. Tap below to log in.", color = TextSecondary, fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+                        is ServerConnectionStatus.DeckLotusAuthRequired -> {
+                            Surface(
+                                color = TierUnsure.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.Warning, contentDescription = null, tint = TierUnsure, modifier = Modifier.size(18.dp))
+                                    Column {
+                                        Text("Deck Lotus Bearer Token Invalid", color = TierUnsure, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        Text("Check your API token below.", color = TextSecondary, fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+                        is ServerConnectionStatus.Unreachable -> {
+                            Surface(
+                                color = SurfaceBorder,
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.Warning, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(18.dp))
+                                    Column {
+                                        Text("Server Unreachable", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        Text(s.errorMessage, color = TextSecondary, fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+                        is ServerConnectionStatus.Checking -> {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = LotusCyan)
+                        }
+                        is ServerConnectionStatus.Idle -> {}
                     }
 
                     OutlinedTextField(
@@ -145,12 +228,11 @@ fun SettingsScreen(
                             baseUrl = it
                             viewModel.updateSettings { s -> s.copy(baseUrl = it) }
                         },
-                        label = { Text("Deck Lotus Base URL") },
-                        placeholder = { Text("http://192.168.1.100:3000") },
+                        label = { Text("Server Base URL (or Cloudflare Tunnel)") },
+                        placeholder = { Text("https://cards.yourdomain.com") },
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = !settings.useMockServer,
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = LotusPurple,
+                            focusedBorderColor = LotusCyan,
                             unfocusedBorderColor = SurfaceBorder
                         )
                     )
@@ -161,15 +243,40 @@ fun SettingsScreen(
                             token = it
                             viewModel.updateSettings { s -> s.copy(apiToken = it) }
                         },
-                        label = { Text("Bearer API Token") },
-                        placeholder = { Text("Optional if auth disabled") },
+                        label = { Text("Deck Lotus API Token") },
+                        placeholder = { Text("Optional if tunnel handles auth") },
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = !settings.useMockServer,
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = LotusPurple,
+                            focusedBorderColor = LotusCyan,
                             unfocusedBorderColor = SurfaceBorder
                         )
                     )
+
+                    // Action Buttons Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { viewModel.testConnection() },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = LotusCyan)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Test Ping")
+                        }
+
+                        Button(
+                            onClick = { viewModel.openCloudflarePortal() },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = LotusPurple)
+                        ) {
+                            Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("CF Portal")
+                        }
+                    }
                 }
             }
 
@@ -186,16 +293,16 @@ fun SettingsScreen(
                 colors = CardDefaults.cardColors(containerColor = SurfaceDark),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    // Auto Focus Toggle
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    // Continuous AF Switch
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Auto-Focus (AF)", fontWeight = FontWeight.Medium)
-                            Text("Enable for handheld testing; disable to lock fixed focal distance in cradle", fontSize = 12.sp, color = TextSecondary)
+                            Text("Continuous Auto-Focus", fontWeight = FontWeight.Medium)
+                            Text("Turn OFF to lock fixed cradle focal distance", fontSize = 12.sp, color = TextSecondary)
                         }
                         Switch(
                             checked = settings.autoFocus,
@@ -205,15 +312,17 @@ fun SettingsScreen(
                         )
                     }
 
-                    // Auto Exposure Toggle
+                    HorizontalDivider(color = SurfaceBorder)
+
+                    // Continuous AE Switch
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Auto-Exposure (AE)", fontWeight = FontWeight.Medium)
-                            Text("Enable for ambient room light; disable to lock 1/500s in lit cradle", fontSize = 12.sp, color = TextSecondary)
+                            Text("Continuous Auto-Exposure", fontWeight = FontWeight.Medium)
+                            Text("Turn OFF to lock manual 1/500s & fixed ISO", fontSize = 12.sp, color = TextSecondary)
                         }
                         Switch(
                             checked = settings.autoExposure,
@@ -223,6 +332,8 @@ fun SettingsScreen(
                         )
                     }
 
+                    HorizontalDivider(color = SurfaceBorder)
+
                     // Torch Toggle
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -230,8 +341,8 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Phone Torch Illumination", fontWeight = FontWeight.Medium)
-                            Text("Provides constant light on dark cards", fontSize = 12.sp, color = TextSecondary)
+                            Text("Rig Illumination Torch", fontWeight = FontWeight.Medium)
+                            Text("Continuous LED illumination for shadow reduction", fontSize = 12.sp, color = TextSecondary)
                         }
                         Switch(
                             checked = settings.torchEnabled,
@@ -246,7 +357,7 @@ fun SettingsScreen(
                     // Manual Shutter Speed
                     Column {
                         Text("Manual Shutter Speed", fontWeight = FontWeight.Medium)
-                        Text(if (settings.autoExposure) "Inactive while Auto-Exposure is ON" else "Locked shutter freezes card drop motion", fontSize = 12.sp, color = TextSecondary)
+                        Text(if (settings.autoExposure) "Inactive while Auto-Exposure is ON" else "1/500s eliminates hand & drop motion blur", fontSize = 12.sp, color = TextSecondary)
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             val speeds = listOf(

@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.widget.Toast
 import androidx.camera.view.PreviewView
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -44,7 +45,8 @@ data class CaptureUiState(
     val rectifiedCardBitmap: Bitmap? = null,
     val cradleState: SettleState = SettleState.WAITING_FOR_CARD,
     val flashPromptTrigger: Long = 0L,
-    val detectedCard: DetectedCardQuad? = null
+    val detectedCard: DetectedCardQuad? = null,
+    val isCommitting: Boolean = false
 )
 
 class CaptureViewModel(application: Application) : AndroidViewModel(application) {
@@ -71,7 +73,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         list.filter { it.isFoil }.sumOf { it.quantity }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
-    private val ingestApi = IngestApi()
+    val apiClient = DeckLotusApiClient()
     private val localResolver = LocalCardResolver(application)
     private val soundFeedback = SoundFeedback(application)
     private val settleDetector = CardSettleDetector()
@@ -201,6 +203,42 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         _uiState.update { it.copy(lastResponse = null, lastError = null) }
     }
 
+    fun commitBatchToCollection() {
+        val currentCards = _sessionCards.value
+        if (currentCards.isEmpty()) return
+
+        val settings = settingsFlow.value
+        if (settings.baseUrl.isBlank()) {
+            Toast.makeText(getApplication(), "Set Server URL in Settings first", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isCommitting = true) }
+            val items = currentCards.map { card ->
+                CommitScanItem(
+                    name = card.name,
+                    setCode = card.setCode,
+                    collectorNumber = card.collectorNumber,
+                    quantity = card.quantity,
+                    isFoil = card.isFoil
+                )
+            }
+
+            val result = apiClient.commitBatch(settings.baseUrl, settings.apiToken, "collection", null, items)
+            _uiState.update { it.copy(isCommitting = false) }
+
+            if (result.isSuccess) {
+                Toast.makeText(getApplication(), "✓ Committed ${currentCards.sumOf { it.quantity }} cards to collection!", Toast.LENGTH_LONG).show()
+                clearSession()
+                isSessionTrayOpen.value = false
+            } else {
+                val errorMsg = result.exceptionOrNull()?.message ?: "Commit failed"
+                Toast.makeText(getApplication(), "Commit error: $errorMsg", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     private fun addCardToSession(
         printing: IngestResolvedPrinting,
         isFoil: Boolean,
@@ -298,34 +336,10 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 }
                 val procMs = (System.nanoTime() - procStart) / 1_000_000
 
-                // 4. Resolve: On-Device Matcher across 112,815 MTG cards (or LAN Server)
+                // 4. Resolve: On-Device Matcher across 112,815 MTG cards (100% Offline)
                 val respStart = System.nanoTime()
                 val setTally = _sessionCards.value.groupingBy { it.setCode.uppercase() }.eachCount()
-                val resp = if (settings.useMockServer) {
-                    localResolver.resolve(hashes.artHash, hashes.frameHash, fullOcr, fullOcr.isFoil, setTally)
-                } else {
-                    val liveMeta = cameraController.liveMetadata.value
-                    val request = IngestRequest(
-                        artHash = hashes.artHash,
-                        frameHash = hashes.frameHash,
-                        ocr = IngestOcrData(
-                            name = fullOcr.name,
-                            setCode = fullOcr.setCode,
-                            collector = fullOcr.collectorNumber,
-                            language = fullOcr.language,
-                            rawLines = fullOcr.rawLines,
-                            confidence = fullOcr.confidence
-                        ),
-                        capture = IngestCaptureMetadata(
-                            exposureNs = liveMeta.exposureTimeNs,
-                            iso = liveMeta.isoSensitivity,
-                            focusDist = liveMeta.focusDistanceDiopters
-                        ),
-                        commit = IngestCommitOptions(isFoil = fullOcr.isFoil)
-                    )
-                    val netResult = ingestApi.postIngest(settings.baseUrl, settings.apiToken, request)
-                    netResult.response ?: localResolver.resolve(hashes.artHash, hashes.frameHash, fullOcr, fullOcr.isFoil, setTally)
-                }
+                val resp = localResolver.resolve(hashes.artHash, hashes.frameHash, fullOcr, fullOcr.isFoil, setTally)
                 val respMs = (System.nanoTime() - respStart) / 1_000_000
                 val totalMs = (System.nanoTime() - totalStart) / 1_000_000
 

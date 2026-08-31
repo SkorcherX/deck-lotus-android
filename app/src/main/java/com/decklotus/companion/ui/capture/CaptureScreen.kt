@@ -417,12 +417,14 @@ fun CaptureScreen(
                 totalCount = totalCount,
                 totalValueUsd = totalValueUsd,
                 totalFoils = totalFoils,
+                isCommitting = uiState.isCommitting,
                 onDismiss = { isSessionTrayOpen = false },
                 onIncrement = { viewModel.incrementQuantity(it) },
                 onDecrement = { viewModel.decrementQuantity(it) },
                 onToggleFoil = { viewModel.toggleFoil(it) },
                 onRemove = { viewModel.removeCard(it) },
-                onClearAll = { viewModel.clearSession() }
+                onClearAll = { viewModel.clearSession() },
+                onCommitToCollection = { viewModel.commitBatchToCollection() }
             )
         }
     }
