@@ -13,6 +13,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.decklotus.companion.camera.CameraController
 import com.decklotus.companion.data.AppSettings
+import com.decklotus.companion.data.ScannedCardItem
 import com.decklotus.companion.data.SettingsRepository
 import com.decklotus.companion.network.*
 import com.decklotus.companion.util.SoundFeedback
@@ -40,7 +41,6 @@ data class CaptureUiState(
     val lastTimings: CaptureTimings? = null,
     val lastError: String? = null,
     val rectifiedCardBitmap: Bitmap? = null,
-    val sessionScanCount: Int = 0,
     val cradleState: SettleState = SettleState.WAITING_FOR_CARD,
     val flashPromptTrigger: Long = 0L,
     val detectedCard: DetectedCardQuad? = null
@@ -54,6 +54,21 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
     private val _uiState = MutableStateFlow(CaptureUiState())
     val uiState: StateFlow<CaptureUiState> = _uiState.asStateFlow()
+
+    private val _sessionCards = MutableStateFlow<List<ScannedCardItem>>(emptyList())
+    val sessionCards: StateFlow<List<ScannedCardItem>> = _sessionCards.asStateFlow()
+
+    val totalCardsCount: StateFlow<Int> = _sessionCards.map { list ->
+        list.sumOf { it.quantity }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    val totalSessionValueUsd: StateFlow<Double> = _sessionCards.map { list ->
+        list.sumOf { it.totalItemPriceUsd }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0.0)
+
+    val foilCardsCount: StateFlow<Int> = _sessionCards.map { list ->
+        list.filter { it.isFoil }.sumOf { it.quantity }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
     private val ingestApi = IngestApi()
     private val mockServer = MockIngestServer()
@@ -97,10 +112,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
                 val frameBitmap = withContext(Dispatchers.Main) { previewView.bitmap } ?: continue
                 
-                // 1. Detect dynamic card contours
                 val detected = cardDetector.detectCard(frameBitmap)
-                
-                // 2. Track motion & settle
                 val settled = settleDetector.processFrame(frameBitmap)
 
                 _uiState.update { 
@@ -154,6 +166,77 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun incrementQuantity(cardId: String) {
+        _sessionCards.update { list ->
+            list.map { if (it.id == cardId) it.copy(quantity = it.quantity + 1) else it }
+        }
+    }
+
+    fun decrementQuantity(cardId: String) {
+        _sessionCards.update { list ->
+            list.mapNotNull {
+                if (it.id == cardId) {
+                    if (it.quantity > 1) it.copy(quantity = it.quantity - 1) else null
+                } else it
+            }
+        }
+    }
+
+    fun toggleFoil(cardId: String) {
+        _sessionCards.update { list ->
+            list.map { if (it.id == cardId) it.copy(isFoil = !it.isFoil) else it }
+        }
+    }
+
+    fun removeCard(cardId: String) {
+        _sessionCards.update { list ->
+            list.filterNot { it.id == cardId }
+        }
+    }
+
+    fun clearSession() {
+        _sessionCards.value = emptyList()
+        _uiState.update { it.copy(lastResponse = null, lastError = null) }
+    }
+
+    private fun addCardToSession(
+        printing: IngestResolvedPrinting,
+        isFoil: Boolean,
+        marketPrice: Double,
+        thumbnail: Bitmap?,
+        tier: String
+    ) {
+        _sessionCards.update { list ->
+            // Check if exact same printing and foil state already exists at the top of list
+            val existingIndex = list.indexOfFirst {
+                it.name.equals(printing.name, ignoreCase = true) &&
+                it.setCode.equals(printing.setCode, ignoreCase = true) &&
+                it.collectorNumber == printing.collector &&
+                it.isFoil == isFoil
+            }
+
+            if (existingIndex != -1) {
+                list.mapIndexed { idx, item ->
+                    if (idx == existingIndex) item.copy(quantity = item.quantity + 1) else item
+                }
+            } else {
+                listOf(
+                    ScannedCardItem(
+                        name = printing.name,
+                        setCode = printing.setCode,
+                        collectorNumber = printing.collector,
+                        language = "EN",
+                        isFoil = isFoil,
+                        quantity = 1,
+                        marketPriceUsd = marketPrice,
+                        thumbnail = thumbnail,
+                        tier = tier
+                    )
+                ) + list
+            }
+        }
+    }
+
     fun triggerCapture(cameraController: CameraController, previewView: PreviewView? = null, isAutoTriggered: Boolean = false) {
         if (_uiState.value.isCapturing) return
 
@@ -168,7 +251,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 val rawBitmap = previewView?.bitmap ?: cameraController.takePictureBitmap()
                 val capMs = (System.nanoTime() - capStart) / 1_000_000
 
-                // 2. Warp / Rectify using detected card corners (or centered cradle fallback)
+                // 2. Warp / Rectify using detected card corners
                 val w = rawBitmap.width.toFloat()
                 val h = rawBitmap.height.toFloat()
 
@@ -182,14 +265,14 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     )
                 } else {
                     val targetAspect = 63.0f / 88.0f
-                    var cardH = h * 0.72f
+                    var cardH = h * 0.70f
                     var cardW = cardH * targetAspect
-                    if (cardW > w * 0.88f) {
-                        cardW = w * 0.88f
+                    if (cardW > w * 0.85f) {
+                        cardW = w * 0.85f
                         cardH = cardW / targetAspect
                     }
-                    val left = (w - cardW) / 2.0f
-                    val top = (h - cardH) / 2.0f
+                    val left = (srcWOrFallback(w) - cardW) / 2.0f
+                    val top = (h - cardH) * 0.40f
                     listOf(
                         PointF(left, top),
                         PointF(left + cardW, top),
@@ -202,7 +285,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     CardGeometry.warpQuad(rawBitmap, quad, CardGeometry.HASH_WIDTH, CardGeometry.HASH_HEIGHT)
                 }
 
-                // 3. Parallel Execution: DCT Hashing (CPU/NEON) + Dual-Region OCR (Tensor G5 NPU)
+                // 3. Parallel Execution: DCT Hashing + Full-Card OCR
                 val procStart = System.nanoTime()
                 val (hashes, fullOcr) = coroutineScope {
                     val hashDeferred = async(Dispatchers.Default) {
@@ -251,21 +334,29 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     totalMs = totalMs
                 )
 
-                if (netResult.response != null && netResult.response.printing != null && netResult.response.tier != "unresolved") {
-                    val isConfident = netResult.response.tier == "confident"
+                val resp = netResult.response
+                if (resp != null && resp.printing != null && resp.tier != "unresolved") {
+                    val isConfident = resp.tier == "confident"
                     triggerHaptic(isConfident)
                     if (settings.soundFeedbackEnabled) {
                         if (isConfident) soundFeedback.playSuccessChime() else soundFeedback.playReviewChime()
                     }
                     settleDetector.markCaptured()
 
+                    addCardToSession(
+                        printing = resp.printing,
+                        isFoil = fullOcr.isFoil || resp.printing.isFoil,
+                        marketPrice = resp.marketPriceUsd ?: resp.printing.marketPriceUsd ?: 0.26,
+                        thumbnail = rectified,
+                        tier = resp.tier
+                    )
+
                     _uiState.update {
                         it.copy(
                             isCapturing = false,
-                            lastResponse = netResult.response,
+                            lastResponse = resp,
                             lastTimings = timings,
                             rectifiedCardBitmap = rectified,
-                            sessionScanCount = it.sessionScanCount + 1,
                             flashPromptTrigger = System.currentTimeMillis(),
                             cradleState = SettleState.LOCKED_AFTER_SCAN
                         )
@@ -278,8 +369,8 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     _uiState.update {
                         it.copy(
                             isCapturing = false,
-                            lastResponse = netResult.response,
-                            lastError = netResult.response?.error ?: netResult.errorMessage,
+                            lastResponse = resp,
+                            lastError = resp?.error ?: netResult.errorMessage,
                             lastTimings = timings,
                             cradleState = SettleState.WAITING_FOR_CARD
                         )
@@ -301,6 +392,8 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
             }
         }
     }
+
+    private fun srcWOrFallback(w: Float): Float = if (w > 0) w else 1080f
 
     private fun triggerHaptic(isSuccess: Boolean) {
         val vib = vibrator ?: return

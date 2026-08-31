@@ -20,7 +20,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -33,12 +32,12 @@ import com.decklotus.companion.camera.CameraController
 import com.decklotus.companion.ui.components.CameraPreviewView
 import com.decklotus.companion.ui.components.DiagnosticsOverlay
 import com.decklotus.companion.ui.components.ScanResultBadge
+import com.decklotus.companion.ui.components.SessionTrayBottomSheet
 import com.decklotus.companion.ui.theme.LotusCyan
 import com.decklotus.companion.ui.theme.LotusPurple
 import com.decklotus.companion.ui.theme.TierConfident
 import com.decklotus.companion.ui.theme.TierPickPrinting
 import com.decklotus.companion.vision.SettleState
-import kotlinx.coroutines.delay
 
 @Composable
 fun CaptureScreen(
@@ -50,7 +49,13 @@ fun CaptureScreen(
 
     val uiState by viewModel.uiState.collectAsState()
     val settings by viewModel.settingsFlow.collectAsState()
+    val sessionCards by viewModel.sessionCards.collectAsState()
+    val totalCount by viewModel.totalCardsCount.collectAsState()
+    val totalValueUsd by viewModel.totalSessionValueUsd.collectAsState()
+    val totalFoils by viewModel.foilCardsCount.collectAsState()
+
     var showDiagnostics by remember { mutableStateOf(false) }
+    var isSessionTrayOpen by remember { mutableStateOf(false) }
 
     var hasCameraPermission by remember {
         mutableStateOf(
@@ -137,19 +142,20 @@ fun CaptureScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Price Pill
-            val priceUsd = uiState.lastResponse?.marketPriceUsd ?: 0.26
+            // Price Pill (Tap to open Session Tray)
+            val displayPrice = if (totalCount > 0) totalValueUsd else (uiState.lastResponse?.marketPriceUsd ?: 0.26)
             Box(
                 modifier = Modifier
+                    .clickable { isSessionTrayOpen = true }
                     .background(Color(0xFF262C36).copy(alpha = 0.9f), RoundedCornerShape(20.dp))
                     .border(1.dp, Color(0xFF3B4352), RoundedCornerShape(20.dp))
                     .padding(horizontal = 16.dp, vertical = 6.dp)
             ) {
                 Text(
-                    text = String.format("$%.2f", priceUsd),
+                    text = String.format("$%.2f", displayPrice),
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White,
+                    color = if (totalCount > 0) Color(0xFF2EA043) else Color.White,
                     fontFamily = FontFamily.Monospace
                 )
             }
@@ -190,22 +196,33 @@ fun CaptureScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Scanned Queue Count Badge
+            // Scanned Queue Count Badge (Tap to open Session Tray)
             Box(
                 modifier = Modifier
-                    .size(42.dp)
-                    .background(Color(0xFF1E232B).copy(alpha = 0.9f), CircleShape)
+                    .size(44.dp)
+                    .clickable { isSessionTrayOpen = true }
+                    .background(
+                        if (totalCount > 0) LotusPurple else Color(0xFF1E232B).copy(alpha = 0.9f),
+                        CircleShape
+                    )
                     .border(1.dp, Color(0xFF333B49), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Download, contentDescription = "Count", tint = Color.White, modifier = Modifier.size(16.dp))
-                    if (uiState.sessionScanCount > 0) {
+                    Icon(
+                        Icons.Default.Download,
+                        contentDescription = "Session Tray",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    if (totalCount > 0) {
+                        Spacer(modifier = Modifier.width(2.dp))
                         Text(
-                            text = "${uiState.sessionScanCount}",
-                            fontSize = 11.sp,
+                            text = "$totalCount",
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            color = TierPickPrinting
+                            color = Color.White,
+                            fontFamily = FontFamily.Monospace
                         )
                     }
                 }
@@ -339,16 +356,19 @@ fun CaptureScreen(
                 .padding(bottom = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            ScanResultBadge(
-                response = uiState.lastResponse,
-                thumbnail = uiState.rectifiedCardBitmap,
-                timings = uiState.lastTimings,
-                errorMessage = uiState.lastError
-            )
+            // Scan Result Card (Tap to open Session Tray)
+            Box(modifier = Modifier.clickable { isSessionTrayOpen = true }) {
+                ScanResultBadge(
+                    response = uiState.lastResponse,
+                    thumbnail = uiState.rectifiedCardBitmap,
+                    timings = uiState.lastTimings,
+                    errorMessage = uiState.lastError
+                )
+            }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Shutter Button (Pulsing in Auto-Scan mode)
+            // Shutter Button
             FloatingActionButton(
                 onClick = { viewModel.triggerCapture(cameraController, previewView) },
                 shape = CircleShape,
@@ -366,6 +386,22 @@ fun CaptureScreen(
                     )
                 }
             }
+        }
+
+        // Session Batch Tray Bottom Sheet
+        if (isSessionTrayOpen) {
+            SessionTrayBottomSheet(
+                cards = sessionCards,
+                totalCount = totalCount,
+                totalValueUsd = totalValueUsd,
+                totalFoils = totalFoils,
+                onDismiss = { isSessionTrayOpen = false },
+                onIncrement = { viewModel.incrementQuantity(it) },
+                onDecrement = { viewModel.decrementQuantity(it) },
+                onToggleFoil = { viewModel.toggleFoil(it) },
+                onRemove = { viewModel.removeCard(it) },
+                onClearAll = { viewModel.clearSession() }
+            )
         }
     }
 }
