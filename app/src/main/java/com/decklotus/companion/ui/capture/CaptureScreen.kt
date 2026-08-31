@@ -359,21 +359,23 @@ fun CaptureScreen(
                 Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White, modifier = Modifier.size(20.dp))
             }
 
-            // Diagnostics HUD Toggle
-            IconButton(
-                onClick = { showDiagnostics = !showDiagnostics },
-                modifier = Modifier
-                    .size(42.dp)
-                    .background(Color(0xFF1E232B).copy(alpha = 0.9f), CircleShape)
-                    .border(1.dp, Color(0xFF333B49), CircleShape)
-            ) {
-                Icon(Icons.Default.Info, contentDescription = "HUD", tint = if (showDiagnostics) LotusCyan else Color.Gray, modifier = Modifier.size(20.dp))
+            // Diagnostics HUD Toggle (Only visible if showDebugInfo is enabled in Settings)
+            if (settings.showDebugInfo) {
+                IconButton(
+                    onClick = { showDiagnostics = !showDiagnostics },
+                    modifier = Modifier
+                        .size(42.dp)
+                        .background(Color(0xFF1E232B).copy(alpha = 0.9f), CircleShape)
+                        .border(1.dp, Color(0xFF333B49), CircleShape)
+                ) {
+                    Icon(Icons.Default.Info, contentDescription = "HUD", tint = if (showDiagnostics) LotusCyan else Color.Gray, modifier = Modifier.size(20.dp))
+                }
             }
         }
 
         // Top Left Collapsible Diagnostics HUD
         AnimatedVisibility(
-            visible = showDiagnostics,
+            visible = showDiagnostics && settings.showDebugInfo,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
@@ -406,7 +408,8 @@ fun CaptureScreen(
                     response = uiState.lastResponse,
                     thumbnail = uiState.rectifiedCardBitmap,
                     timings = uiState.lastTimings,
-                    errorMessage = uiState.lastError
+                    errorMessage = uiState.lastError,
+                    showDebugInfo = settings.showDebugInfo
                 )
             }
 

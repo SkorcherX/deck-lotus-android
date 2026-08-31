@@ -121,6 +121,26 @@ fun SettingsScreen(
                             }
                         )
                     }
+
+                    HorizontalDivider(color = SurfaceBorder)
+
+                    // Show Debug Info & HUD Switch
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Show Debug Info & Diagnostics", fontWeight = FontWeight.Medium)
+                            Text("Shows scan latency timings and the HUD (i) button on viewfinder", fontSize = 12.sp, color = TextSecondary)
+                        }
+                        Switch(
+                            checked = settings.showDebugInfo,
+                            onCheckedChange = { checked ->
+                                viewModel.updateSettings { it.copy(showDebugInfo = checked) }
+                            }
+                        )
+                    }
                 }
             }
 
