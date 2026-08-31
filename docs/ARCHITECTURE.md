@@ -28,54 +28,46 @@ is used for syncing inventory, collection modifications, deck updates, and trade
 └────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Server contract (draft — implement the mock to this shape)
+## Server Integration & Cloudflare Access Zero Trust
 
-`POST {baseUrl}/api/scan/ingest`
-Auth: `Authorization: Bearer <token>` (LAN, but still token-gated like the web API).
+### 1. Cloudflare Access Captive Portal & CookieJar
+The server may be hosted behind a Cloudflare Tunnel secured by Cloudflare Zero Trust (Google OAuth / Email OTP):
+- **Captive Portal (`CloudflarePortalDialog.kt`)**: Embedded WebView modal configured with mobile Chrome User-Agent so Google OAuth and Email OTP complete smoothly.
+- **Cookie Synchronization (`CloudflareCookieJar.kt`)**: Automatically passes `CF_Authorization` session cookies across all OkHttp network requests.
 
-Request:
+### 2. Authentication
+- Headers sent: `X-API-Key: <token>` and `Authorization: Bearer <token>`.
+- Connectivity health checked against `GET /api/auth/me`.
+
+### 3. Collection Batch Commits
+Batch scans are committed using the database-agnostic inventory bulk-add endpoint:
+`POST {baseUrl}/api/inventory/bulk-add`
+
+Request Body:
 ```json
 {
-  "artHash":   "<256-bit hex, 64 chars>",
-  "frameHash": "<64-bit hex, 16 chars>",
-  "ocr": {
-    "setCode":     "ECC",
-    "collector":   "0001",
-    "language":    "EN",
-    "rawLines":    ["ECC • EN", "0001", "..."],
-    "confidence":  0.94
-  },
-  "capture": {
-    "exposureNs": 2000000,
-    "iso":        100,
-    "focusDist":  4.2,
-    "device":     "pixel-10-pro",
-    "rig":        "card-slinger-3.0"
-  },
-  "commit": { "mode": "inventory", "deckId": null, "isFoil": false }
+  "source": "scanner",
+  "items": [
+    {
+      "cardName": "Monstrous Rage",
+      "setCode": "SOA",
+      "collectorNumber": "45",
+      "quantity": 1,
+      "isFoil": false
+    }
+  ]
 }
 ```
 
 Response:
 ```json
 {
-  "tier": "confident",           // confident | probable | pick-printing | unresolved
-  "printing": {
-    "uuid": "…", "name": "Cultivate", "setCode": "ECC",
-    "collector": "0001", "isFoil": false
-  },
-  "candidates": [ /* when tier = pick-printing */ ],
-  "committed": true,
-  "hashDistanceBits": 34
+  "added": 1,
+  "failed": 0,
+  "errors": []
 }
 ```
-
-Notes:
-- The art hash still does the heavy lifting; OCR set+collector is a **constraint /
-  tiebreaker** that lets reprints reach `confident` instead of `pick-printing`.
-- `frameHash` lets the server dedupe accidental double-drops.
-- Batch variant (`POST /api/scan/ingest/batch`) or a WebSocket stream is a later
-  optimization for full Card Slinger throughput; start with one request per card.
+*Note: Using `bulk-add` avoids reliance on database-specific auto-increment `printingId`s and seamlessly withstands weekly MTGJSON server database rebuilds.*
 
 ## Hashing parity (do not drift)
 
