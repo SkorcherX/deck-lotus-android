@@ -28,6 +28,7 @@ import com.decklotus.companion.vision.DetectedCardQuad
 import com.decklotus.companion.vision.SettleState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import java.util.UUID
 
 data class CaptureTimings(
     val captureMs: Long = 0,
@@ -221,15 +222,17 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
         viewModelScope.launch {
             _uiState.update { it.copy(isCommitting = true) }
-            val items = currentCards.map { card ->
-                InventoryBulkAddItem(
-                    cardName = card.name,
-                    setCode = card.setCode,
-                    collectorNumber = card.collectorNumber,
-                    quantity = card.quantity,
-                    isFoil = card.isFoil
-                )
-            }
+            val items = currentCards
+                .groupBy { Triple(it.name, it.setCode, Pair(it.collectorNumber, it.isFoil)) }
+                .map { (key, group) ->
+                    InventoryBulkAddItem(
+                        cardName = key.first,
+                        setCode = key.second,
+                        collectorNumber = key.third.first,
+                        quantity = group.sumOf { it.quantity },
+                        isFoil = key.third.second
+                    )
+                }
 
             val targetName = settings.activeProfile?.name ?: "Collection"
             val token = settings.effectiveToken
@@ -257,35 +260,22 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         tier: String
     ) {
         _sessionCards.update { list ->
-            val existingIndex = list.indexOfFirst {
-                (printing.printingId != null && printing.printingId > 0 && it.printingId == printing.printingId && it.isFoil == isFoil) || (
-                    it.name.equals(printing.name, ignoreCase = true) &&
-                    it.setCode.equals(printing.setCode, ignoreCase = true) &&
-                    it.collectorNumber == printing.collector &&
-                    it.isFoil == isFoil
+            listOf(
+                ScannedCardItem(
+                    id = UUID.randomUUID().toString(),
+                    printingId = printing.printingId ?: 0,
+                    name = printing.name,
+                    setCode = printing.setCode,
+                    collectorNumber = printing.collector,
+                    language = "EN",
+                    isFoil = isFoil,
+                    quantity = 1,
+                    marketPriceUsd = marketPrice,
+                    thumbnail = thumbnail,
+                    tier = tier,
+                    timestamp = System.currentTimeMillis()
                 )
-            }
-
-            if (existingIndex != -1) {
-                list.mapIndexed { idx, item ->
-                    if (idx == existingIndex) item.copy(quantity = item.quantity + 1) else item
-                }
-            } else {
-                listOf(
-                    ScannedCardItem(
-                        printingId = printing.printingId ?: 0,
-                        name = printing.name,
-                        setCode = printing.setCode,
-                        collectorNumber = printing.collector,
-                        language = "EN",
-                        isFoil = isFoil,
-                        quantity = 1,
-                        marketPriceUsd = marketPrice,
-                        thumbnail = thumbnail,
-                        tier = tier
-                    )
-                ) + list
-            }
+            ) + list
         }
     }
 
