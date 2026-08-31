@@ -8,6 +8,7 @@ import java.util.UUID
  */
 data class ScannedCardItem(
     val id: String = UUID.randomUUID().toString(),
+    val printingId: Int = 0,
     val name: String,
     val setCode: String,
     val collectorNumber: String,

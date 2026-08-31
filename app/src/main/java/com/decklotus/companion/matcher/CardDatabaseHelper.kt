@@ -10,6 +10,7 @@ import java.io.FileOutputStream
 
 data class CardIdentity(
     val rowId: Int,
+    val printingId: Int,
     val name: String,
     val setCode: String,
     val collectorNumber: String,
@@ -20,7 +21,7 @@ data class CardIdentity(
 }
 
 /**
- * High-speed SQLite helper for reading card identities (name, set, collector number, price)
+ * High-speed SQLite helper for reading card identities (name, set, collector number, price, printing_id)
  * for all 112,815 MTG printings directly on-device.
  */
 class CardDatabaseHelper(private val context: Context) {
@@ -31,8 +32,15 @@ class CardDatabaseHelper(private val context: Context) {
         if (db != null && db!!.isOpen) return@withContext
 
         val dbFile = File(context.filesDir, "card-identities.db")
-        if (!dbFile.exists() || dbFile.length() < 1000) {
-            Log.d("CardDatabaseHelper", "Extracting card-identities.db from assets...")
+        val assetSize = try {
+            context.assets.openFd("card-identities.db").length
+        } catch (_: Exception) {
+            9_000_000L
+        }
+
+        // Always ensure database matches latest asset version
+        if (!dbFile.exists() || dbFile.length() != assetSize) {
+            Log.d("CardDatabaseHelper", "Extracting fresh card-identities.db from assets...")
             context.assets.open("card-identities.db").use { input ->
                 FileOutputStream(dbFile).use { output ->
                     input.copyTo(output)
@@ -81,13 +89,13 @@ class CardDatabaseHelper(private val context: Context) {
     private fun queryByNameExact(clean: String): List<CardIdentity> {
         val database = db ?: return emptyList()
         val cursor = database.rawQuery(
-            "SELECT row_id, name, set_code, collector_number, price_cents FROM printings WHERE name = ? COLLATE NOCASE LIMIT 40",
+            "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE name = ? COLLATE NOCASE LIMIT 40",
             arrayOf(clean)
         )
         val list = mutableListOf<CardIdentity>()
         try {
             while (cursor.moveToNext()) {
-                list.add(CardIdentity(cursor.getInt(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getInt(4)))
+                list.add(CardIdentity(cursor.getInt(0), cursor.getInt(1), cursor.getString(2), cursor.getString(3), cursor.getString(4), cursor.getInt(5)))
             }
         } finally {
             cursor.close()
@@ -98,13 +106,13 @@ class CardDatabaseHelper(private val context: Context) {
     private fun queryByNamePrefix(clean: String): List<CardIdentity> {
         val database = db ?: return emptyList()
         val cursor = database.rawQuery(
-            "SELECT row_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 40",
+            "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 40",
             arrayOf("$clean%")
         )
         val list = mutableListOf<CardIdentity>()
         try {
             while (cursor.moveToNext()) {
-                list.add(CardIdentity(cursor.getInt(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getInt(4)))
+                list.add(CardIdentity(cursor.getInt(0), cursor.getInt(1), cursor.getString(2), cursor.getString(3), cursor.getString(4), cursor.getInt(5)))
             }
         } finally {
             cursor.close()
@@ -115,13 +123,13 @@ class CardDatabaseHelper(private val context: Context) {
     private fun queryByNameSubstring(clean: String): List<CardIdentity> {
         val database = db ?: return emptyList()
         val cursor = database.rawQuery(
-            "SELECT row_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 40",
+            "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 40",
             arrayOf("%$clean%")
         )
         val list = mutableListOf<CardIdentity>()
         try {
             while (cursor.moveToNext()) {
-                list.add(CardIdentity(cursor.getInt(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getInt(4)))
+                list.add(CardIdentity(cursor.getInt(0), cursor.getInt(1), cursor.getString(2), cursor.getString(3), cursor.getString(4), cursor.getInt(5)))
             }
         } finally {
             cursor.close()
@@ -134,18 +142,19 @@ class CardDatabaseHelper(private val context: Context) {
         if (rowIds.isEmpty()) return emptyMap()
 
         val inClause = rowIds.joinToString(",")
-        val query = "SELECT row_id, name, set_code, collector_number, price_cents FROM printings WHERE row_id IN ($inClause)"
+        val query = "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE row_id IN ($inClause)"
         val cursor = database.rawQuery(query, null)
         val result = mutableMapOf<Int, CardIdentity>()
 
         try {
             while (cursor.moveToNext()) {
                 val rowId = cursor.getInt(0)
-                val name = cursor.getString(1)
-                val setCode = cursor.getString(2)
-                val collector = cursor.getString(3)
-                val priceCents = cursor.getInt(4)
-                result[rowId] = CardIdentity(rowId, name, setCode, collector, priceCents)
+                val printingId = cursor.getInt(1)
+                val name = cursor.getString(2)
+                val setCode = cursor.getString(3)
+                val collector = cursor.getString(4)
+                val priceCents = cursor.getInt(5)
+                result[rowId] = CardIdentity(rowId, printingId, name, setCode, collector, priceCents)
             }
         } finally {
             cursor.close()

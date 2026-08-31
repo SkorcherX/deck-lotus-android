@@ -11,10 +11,11 @@ if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
 const outDb = new Database(outPath);
 
 outDb.exec('PRAGMA synchronous = OFF; PRAGMA journal_mode = MEMORY;');
-outDb.exec('CREATE TABLE printings (row_id INTEGER PRIMARY KEY, name TEXT, set_code TEXT, collector_number TEXT, price_cents INTEGER);');
+outDb.exec('CREATE TABLE printings (row_id INTEGER PRIMARY KEY, printing_id INTEGER, name TEXT, set_code TEXT, collector_number TEXT, price_cents INTEGER);');
 
 const printings = sourceDb.prepare(`
   SELECT
+    p.id,
     p.uuid,
     c.name,
     p.set_code,
@@ -33,9 +34,9 @@ for (const p of printings) {
   byUuid.set(p.uuid.toLowerCase().replace(/-/g, ''), p);
 }
 
-const insert = outDb.prepare('INSERT INTO printings (row_id, name, set_code, collector_number, price_cents) VALUES (?, ?, ?, ?, ?)');
+const insert = outDb.prepare('INSERT INTO printings (row_id, printing_id, name, set_code, collector_number, price_cents) VALUES (?, ?, ?, ?, ?, ?)');
 const insertMany = outDb.transaction((rows) => {
-  for (const r of rows) insert.run(r[0], r[1], r[2], r[3], r[4]);
+  for (const r of rows) insert.run(r[0], r[1], r[2], r[3], r[4], r[5]);
 });
 
 const batch = [];
@@ -46,9 +47,9 @@ for (let row = 0; row < count; row++) {
   const info = byUuid.get(rawUuid);
   if (info) {
     matched++;
-    batch.push([row, info.name, info.set_code, info.collector_number, Math.round((info.price || 0.26) * 100)]);
+    batch.push([row, info.id, info.name, info.set_code, info.collector_number, Math.round((info.price || 0.26) * 100)]);
   } else {
-    batch.push([row, 'Unknown Card', 'UNK', '0', 26]);
+    batch.push([row, 0, 'Unknown Card', 'UNK', '0', 26]);
   }
 }
 

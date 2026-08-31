@@ -217,6 +217,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
             _uiState.update { it.copy(isCommitting = true) }
             val items = currentCards.map { card ->
                 CommitScanItem(
+                    printingId = if (card.printingId > 0) card.printingId else null,
                     name = card.name,
                     setCode = card.setCode,
                     collectorNumber = card.collectorNumber,
@@ -248,10 +249,12 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
     ) {
         _sessionCards.update { list ->
             val existingIndex = list.indexOfFirst {
-                it.name.equals(printing.name, ignoreCase = true) &&
-                it.setCode.equals(printing.setCode, ignoreCase = true) &&
-                it.collectorNumber == printing.collector &&
-                it.isFoil == isFoil
+                (printing.printingId != null && printing.printingId > 0 && it.printingId == printing.printingId && it.isFoil == isFoil) || (
+                    it.name.equals(printing.name, ignoreCase = true) &&
+                    it.setCode.equals(printing.setCode, ignoreCase = true) &&
+                    it.collectorNumber == printing.collector &&
+                    it.isFoil == isFoil
+                )
             }
 
             if (existingIndex != -1) {
@@ -261,6 +264,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
             } else {
                 listOf(
                     ScannedCardItem(
+                        printingId = printing.printingId ?: 0,
                         name = printing.name,
                         setCode = printing.setCode,
                         collectorNumber = printing.collector,

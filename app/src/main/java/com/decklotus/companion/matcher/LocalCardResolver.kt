@@ -89,11 +89,12 @@ class LocalCardResolver(private val context: Context) {
             }
 
             val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
-            Log.d("LocalCardResolver", "Resolved by Database Verification: \"${bestPrinting.name}\" [${bestPrinting.setCode} #${bestPrinting.collectorNumber}] (score=$highestScore) in ${elapsedMs}ms")
+            Log.d("LocalCardResolver", "Resolved by Database Verification: \"${bestPrinting.name}\" (id=${bestPrinting.printingId}) [${bestPrinting.setCode} #${bestPrinting.collectorNumber}] (score=$highestScore) in ${elapsedMs}ms")
 
             return@withContext IngestResponse(
                 tier = "confident",
                 printing = IngestResolvedPrinting(
+                    printingId = bestPrinting.printingId,
                     uuid = UUID.randomUUID().toString(),
                     name = bestPrinting.name,
                     setCode = bestPrinting.setCode,
@@ -121,11 +122,12 @@ class LocalCardResolver(private val context: Context) {
 
             if (bestIdentity != null) {
                 val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
-                Log.d("LocalCardResolver", "Resolved by Art Hash: \"${bestIdentity.name}\" [${bestIdentity.setCode} #${bestIdentity.collectorNumber}] in ${elapsedMs}ms (dist=${bestHash.artDistance})")
+                Log.d("LocalCardResolver", "Resolved by Art Hash: \"${bestIdentity.name}\" (id=${bestIdentity.printingId}) [${bestIdentity.setCode} #${bestIdentity.collectorNumber}] in ${elapsedMs}ms (dist=${bestHash.artDistance})")
 
                 return@withContext IngestResponse(
                     tier = if (bestHash.artDistance <= 41) "confident" else "pick-printing",
                     printing = IngestResolvedPrinting(
+                        printingId = bestIdentity.printingId,
                         uuid = UUID.randomUUID().toString(),
                         name = bestIdentity.name,
                         setCode = bestIdentity.setCode,
