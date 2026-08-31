@@ -72,23 +72,60 @@ class CardDatabaseHelper(private val context: Context) {
         return emptyList()
     }
 
-    fun findCardsByName(name: String): List<CardIdentity> {
+    fun findCardsByName(name: String, setCodeHint: String? = null): List<CardIdentity> {
         val clean = name.replace(Regex("""[0-9/\{\}★☆]"""), "").trim()
         if (clean.length < 2) return emptyList()
 
+        // 1. If set code hint is known, query exact name in that specific set first
+        if (!setCodeHint.isNullOrBlank()) {
+            val setSpecific = queryByNameAndSet(clean, setCodeHint)
+            if (setSpecific.isNotEmpty()) return setSpecific
+        }
+
+        // 2. Exact name match across all sets (high limit to include all basic lands & reprints)
         val exact = queryByNameExact(clean)
         if (exact.isNotEmpty()) return exact
 
+        // 3. Prefix match
         val prefix = queryByNamePrefix(clean)
         if (prefix.isNotEmpty()) return prefix
 
-        return queryByNameSubstring(clean)
+        // 4. Substring match
+        val sub = queryByNameSubstring(clean)
+        if (sub.isNotEmpty()) return sub
+
+        // 5. Fuzzy Word Fallback: If OCR had a typo in one word (e.g. "Disdainful Stroke" -> "Disdainful Strike")
+        val words = clean.split(" ").filter { it.length >= 4 }
+        if (words.isNotEmpty()) {
+            val firstWord = words.first()
+            val fuzzy = queryByNamePrefix(firstWord)
+            if (fuzzy.isNotEmpty()) return fuzzy
+        }
+
+        return emptyList()
+    }
+
+    private fun queryByNameAndSet(name: String, setCode: String): List<CardIdentity> {
+        val database = db ?: return emptyList()
+        val cursor = database.rawQuery(
+            "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE name = ? COLLATE NOCASE AND set_code = ? COLLATE NOCASE LIMIT 100",
+            arrayOf(name, setCode)
+        )
+        val list = mutableListOf<CardIdentity>()
+        try {
+            while (cursor.moveToNext()) {
+                list.add(CardIdentity(cursor.getInt(0), cursor.getInt(1), cursor.getString(2), cursor.getString(3), cursor.getString(4), cursor.getInt(5)))
+            }
+        } finally {
+            cursor.close()
+        }
+        return list
     }
 
     private fun queryByNameExact(clean: String): List<CardIdentity> {
         val database = db ?: return emptyList()
         val cursor = database.rawQuery(
-            "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE name = ? COLLATE NOCASE LIMIT 40",
+            "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE name = ? COLLATE NOCASE LIMIT 250",
             arrayOf(clean)
         )
         val list = mutableListOf<CardIdentity>()
@@ -105,7 +142,7 @@ class CardDatabaseHelper(private val context: Context) {
     private fun queryByNamePrefix(clean: String): List<CardIdentity> {
         val database = db ?: return emptyList()
         val cursor = database.rawQuery(
-            "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 40",
+            "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 150",
             arrayOf("$clean%")
         )
         val list = mutableListOf<CardIdentity>()
@@ -122,7 +159,7 @@ class CardDatabaseHelper(private val context: Context) {
     private fun queryByNameSubstring(clean: String): List<CardIdentity> {
         val database = db ?: return emptyList()
         val cursor = database.rawQuery(
-            "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 40",
+            "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 100",
             arrayOf("%$clean%")
         )
         val list = mutableListOf<CardIdentity>()

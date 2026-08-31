@@ -43,7 +43,7 @@ class LocalCardResolver(private val context: Context) {
         // 1. Gather Candidate Printings (via OCR Title OR Visual Art Hash fallback)
         val candidates: List<CardIdentity> = withContext(Dispatchers.IO) {
             val nameCandidates = if (!ocr.name.isNullOrBlank()) {
-                val direct = dbHelper.findCardsByName(ocr.name)
+                val direct = dbHelper.findCardsByName(ocr.name, ocr.setCode)
                 if (direct.isNotEmpty()) direct else dbHelper.findBestMatchingCardFromLines(ocr.rawLines)
             } else {
                 dbHelper.findBestMatchingCardFromLines(ocr.rawLines)

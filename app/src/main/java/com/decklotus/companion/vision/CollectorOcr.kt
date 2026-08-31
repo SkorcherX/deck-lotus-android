@@ -138,17 +138,21 @@ object CollectorOcr {
             isFoil = true
         }
 
-        // Pattern 1: Set • Lang (e.g. "SOA • EN", "FDN · EN", "WOE - EN", "MH3/EN", "BLB | EN", "OTJ I EN", "SOS • EN")
+        // Pattern 1A: Set • Lang with separators (e.g. "SOA • EN", "FDN · EN", "WOE - EN", "MH3/EN", "BLB | EN", "OTJ I EN", "SOS • EN")
         val setLangRegex = Regex("""\b([A-Za-z0-9]{3,4})\s*[\u2022\u2219\u00B7\u25CF\u25AA\.\-\/\\\|I\s]\s*([A-Za-z]{2,3})\b""", RegexOption.IGNORE_CASE)
 
-        // Pattern 2A: High-Confidence Rarity + Collector Number (e.g. "R 0052", "U 0045", "M 0018", "C 0124")
-        val rarityNumRegex = Regex("""\b(?:R|M|C|U|L|S|T|P)\s*(\d{1,4}[A-Za-z]?)\b""", RegexOption.IGNORE_CASE)
+        // Pattern 1B: Merged Set + Lang without separator (e.g. "SOAEN", "SOSEN", "ECLEN", "SOAENMATTHEW", "SOSENMARIE")
+        val mergedSetLangRegex = Regex("""\b([A-Za-z0-9]{3,4})(EN|JP|JA|DE|FR|IT|ES|PT|RU|KO|ZHS|ZHT|CS|CT)\b""", RegexOption.IGNORE_CASE)
+        val mergedPrefixRegex = Regex("""\b([A-Za-z0-9]{3,4})(EN|JP|JA|DE|FR|IT|ES|PT|RU|KO|ZHS|ZHT|CS|CT)[A-Za-z]*\b""", RegexOption.IGNORE_CASE)
+
+        // Pattern 2A: High-Confidence Rarity + Collector Number (e.g. "R 0052", "RO052", "M O078", "U 0045", "M 0018", "C 0124", "C O017")
+        val rarityNumRegex = Regex("""\b(?:R|M|C|U|L|S|T|P)\s*([0-9Oo]{1,4}[A-Za-z]?)\b""", RegexOption.IGNORE_CASE)
 
         // Pattern 2B: Fractional Collector Number (e.g. "0015/0280", "0123/0281", "0052/0281")
-        val fractionRegex = Regex("""\b(\d{1,4}[A-Za-z]?)\s*\/\s*(\d{2,4})\b""")
+        val fractionRegex = Regex("""\b([0-9Oo]{1,4}[A-Za-z]?)\s*\/\s*(\d{2,4})\b""")
 
-        // Pattern 2C: Padded 3/4-digit numbers (e.g. "0052", "0045", "0015", "0123")
-        val paddedNumRegex = Regex("""\b(\d{3,4}[A-Za-z]?)\b""")
+        // Pattern 2C: Padded 3/4-digit numbers including OCR letter 'O'/'o' (e.g. "0052", "O078", "O339", "O347", "O324", "0018")
+        val paddedNumRegex = Regex("""\b([0-9Oo]{3,4}[A-Za-z]?)\b""")
 
         // Filter out copyright lines & power/toughness lines
         val filteredLines = lines.filterNot { line ->
@@ -166,13 +170,13 @@ object CollectorOcr {
         for (line in linesToInspect) {
             val clean = line.replace("★", "").replace("☆", "").trim()
 
-            // Check Set • Lang
+            // Check Set • Lang (explicit separator)
             if (setCode == null) {
                 val setMatch = setLangRegex.find(clean)
                 if (setMatch != null) {
                     val candidateSet = setMatch.groupValues[1].uppercase()
                     val candidateLang = setMatch.groupValues[2].uppercase()
-                    val nonSetTokens = setOf("THE", "AND", "NOT", "FOR", "ALL", "SET", "NEW", "CARD", "MTG", "DECK", "WOTC", "TM", "HAS", "CAN", "YOU", "GET", "ONE", "TWO")
+                    val nonSetTokens = setOf("THE", "AND", "NOT", "FOR", "ALL", "SET", "NEW", "CARD", "MTG", "DECK", "WOTC", "TM", "HAS", "CAN", "YOU", "GET", "ONE", "TWO", "FROM")
                     if (candidateSet.length in 3..4 && candidateSet !in nonSetTokens && candidateLang in setOf("EN", "JP", "JA", "DE", "FR", "IT", "ES", "PT", "RU", "KO", "ZHS", "ZHT", "CS", "CT")) {
                         setCode = candidateSet
                         language = candidateLang
@@ -180,35 +184,49 @@ object CollectorOcr {
                 }
             }
 
-            // High-confidence rarity + collector number (e.g. "R 0052" -> captures "0052" and "52")
+            // Check Merged Set + Lang (e.g. "SOAEN", "SOSEN", "ECLEN")
+            if (setCode == null) {
+                val mergedMatch = mergedSetLangRegex.find(clean) ?: mergedPrefixRegex.find(clean)
+                if (mergedMatch != null) {
+                    val candidateSet = mergedMatch.groupValues[1].uppercase()
+                    val candidateLang = mergedMatch.groupValues[2].uppercase()
+                    val nonSetTokens = setOf("THE", "AND", "NOT", "FOR", "ALL", "SET", "NEW", "CARD", "MTG", "DECK", "WOTC", "TM", "HAS", "CAN", "YOU", "GET", "ONE", "TWO", "FROM")
+                    if (candidateSet.length in 3..4 && candidateSet !in nonSetTokens) {
+                        setCode = candidateSet
+                        language = candidateLang
+                    }
+                }
+            }
+
+            // High-confidence rarity + collector number (e.g. "R 0052", "RO052", "M O078" -> captures "0052" and "52")
             val rarityMatch = rarityNumRegex.find(clean)
             if (rarityMatch != null) {
-                val num = rarityMatch.groupValues[1]
-                val stripped = num.trimStart('0').ifEmpty { "0" }
-                if (num !in candidateNumbers) candidateNumbers.add(num)
+                val rawNum = rarityMatch.groupValues[1].replace('O', '0').replace('o', '0')
+                val stripped = rawNum.trimStart('0').ifEmpty { "0" }
+                if (rawNum !in candidateNumbers) candidateNumbers.add(rawNum)
                 if (stripped !in candidateNumbers) candidateNumbers.add(stripped)
             }
 
             // Fraction match (e.g. "0015/0280" -> captures "0015" and "15")
             val fracMatch = fractionRegex.find(clean)
             if (fracMatch != null) {
-                val num = fracMatch.groupValues[1]
+                val rawNum = fracMatch.groupValues[1].replace('O', '0').replace('o', '0')
                 val denom = fracMatch.groupValues[2].toIntOrNull() ?: 0
                 if (denom >= 30) { // Set denominator must be >= 30, avoiding P/T like 1/1
-                    val stripped = num.trimStart('0').ifEmpty { "0" }
-                    if (num !in candidateNumbers) candidateNumbers.add(num)
+                    val stripped = rawNum.trimStart('0').ifEmpty { "0" }
+                    if (rawNum !in candidateNumbers) candidateNumbers.add(rawNum)
                     if (stripped !in candidateNumbers) candidateNumbers.add(stripped)
                 }
             }
 
-            // Padded 3/4-digit numbers (e.g. "0052", "0045", "0015", "0123")
+            // Padded 3/4-digit numbers (e.g. "0052", "O078", "O339", "O347", "O324")
             val padMatch = paddedNumRegex.find(clean)
             if (padMatch != null) {
-                val num = padMatch.groupValues[1]
-                val intVal = num.filter { it.isDigit() }.toIntOrNull() ?: -1
+                val rawNum = padMatch.groupValues[1].replace('O', '0').replace('o', '0')
+                val intVal = rawNum.filter { it.isDigit() }.toIntOrNull() ?: -1
                 if (intVal !in 1990..2030) { // Exclude copyright years
-                    val stripped = num.trimStart('0').ifEmpty { "0" }
-                    if (num !in candidateNumbers) candidateNumbers.add(num)
+                    val stripped = rawNum.trimStart('0').ifEmpty { "0" }
+                    if (rawNum !in candidateNumbers) candidateNumbers.add(rawNum)
                     if (stripped !in candidateNumbers) candidateNumbers.add(stripped)
                 }
             }
@@ -216,16 +234,16 @@ object CollectorOcr {
 
         // Phase 2: Fallback general collector numbers if none found yet
         if (candidateNumbers.isEmpty()) {
-            val generalCollectorRegex = Regex("""\b(?:U|R|M|C|L|T|S|P)?\s*(\d{1,4}[A-Za-z]?)\b""", RegexOption.IGNORE_CASE)
+            val generalCollectorRegex = Regex("""\b(?:U|R|M|C|L|T|S|P)?\s*([0-9Oo]{1,4}[A-Za-z]?)\b""", RegexOption.IGNORE_CASE)
             for (line in linesToInspect) {
                 val clean = line.replace("★", "").replace("☆", "").trim()
                 val m = generalCollectorRegex.find(clean)
                 if (m != null) {
-                    val cand = m.groupValues[1]
-                    val intVal = cand.filter { it.isDigit() }.toIntOrNull() ?: -1
+                    val rawCand = m.groupValues[1].replace('O', '0').replace('o', '0')
+                    val intVal = rawCand.filter { it.isDigit() }.toIntOrNull() ?: -1
                     if (intVal !in 1990..2030) { // Ignore copyright years
-                        val stripped = cand.trimStart('0').ifEmpty { "0" }
-                        candidateNumbers.add(cand)
+                        val stripped = rawCand.trimStart('0').ifEmpty { "0" }
+                        if (rawCand !in candidateNumbers) candidateNumbers.add(rawCand)
                         if (stripped !in candidateNumbers) candidateNumbers.add(stripped)
                     }
                 }
