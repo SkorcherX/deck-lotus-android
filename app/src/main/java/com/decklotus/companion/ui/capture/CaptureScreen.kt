@@ -251,7 +251,7 @@ fun CaptureScreen(
 
             // Shutter Button
             FloatingActionButton(
-                onClick = { viewModel.triggerCapture(cameraController) },
+                onClick = { viewModel.triggerCapture(cameraController, previewView) },
                 shape = CircleShape,
                 containerColor = LotusPurple,
                 contentColor = Color.White,

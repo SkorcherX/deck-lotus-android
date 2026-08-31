@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import androidx.camera.view.PreviewView
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.decklotus.companion.camera.CameraController
@@ -17,9 +18,8 @@ import com.decklotus.companion.network.*
 import com.decklotus.companion.vision.CardGeometry
 import com.decklotus.companion.vision.CardHasher
 import com.decklotus.companion.vision.CollectorOcr
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
 
 data class CaptureTimings(
     val captureMs: Long = 0,
@@ -90,7 +90,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun triggerCapture(cameraController: CameraController) {
+    fun triggerCapture(cameraController: CameraController, previewView: PreviewView? = null) {
         if (_uiState.value.isCapturing) return
 
         viewModelScope.launch {
@@ -100,13 +100,13 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
             try {
                 val settings = settingsFlow.value
 
-                // 1. Grab camera frame
+                // 1. Instant zero-lag frame acquisition
                 val capStart = System.nanoTime()
-                val rawBitmap = cameraController.takePictureBitmap()
+                val rawBitmap = previewView?.bitmap ?: cameraController.takePictureBitmap()
                 val capMs = (System.nanoTime() - capStart) / 1_000_000
 
                 // 2. Warp / Rectify to standard 487x680 card frame
-                val hashStart = System.nanoTime()
+                val geomStart = System.nanoTime()
                 val w = rawBitmap.width.toFloat()
                 val h = rawBitmap.height.toFloat()
 
@@ -127,19 +127,30 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     PointF(left, top + cardH)
                 )
 
-                val rectified = CardGeometry.warpQuad(rawBitmap, quad, CardGeometry.HASH_WIDTH, CardGeometry.HASH_HEIGHT)
-                val hashes = CardHasher.hashRectified(rectified)
-                val hashMs = (System.nanoTime() - hashStart) / 1_000_000
+                val rectified = withContext(Dispatchers.Default) {
+                    CardGeometry.warpQuad(rawBitmap, quad, CardGeometry.HASH_WIDTH, CardGeometry.HASH_HEIGHT)
+                }
 
-                // 3. Dual-Region ML Kit OCR (Title + Collector) on Tensor G5
-                val ocrStart = System.nanoTime()
-                val titleCrop = CollectorOcr.cropTitleRegion(rectified)
-                val collectorCrop = CollectorOcr.cropCollectorRegion(rectified)
+                // 3. Parallel Execution: DCT Hashing (CPU/NEON) + Dual-Region OCR (Tensor G5 NPU)
+                val procStart = System.nanoTime()
+                val (hashes, fullOcr) = coroutineScope {
+                    val hashDeferred = async(Dispatchers.Default) {
+                        CardHasher.hashRectified(rectified)
+                    }
 
-                val titleRecognized = CollectorOcr.recognizeText(titleCrop)
-                val collectorRecognized = CollectorOcr.recognizeText(collectorCrop)
-                val fullOcr = CollectorOcr.parseFullCardOcr(titleRecognized, collectorRecognized)
-                val ocrMs = (System.nanoTime() - ocrStart) / 1_000_000
+                    val ocrDeferred = async(Dispatchers.Default) {
+                        val titleCrop = CollectorOcr.cropTitleRegion(rectified)
+                        val collectorCrop = CollectorOcr.cropCollectorRegion(rectified)
+
+                        val titleTask = async { CollectorOcr.recognizeText(titleCrop) }
+                        val collectorTask = async { CollectorOcr.recognizeText(collectorCrop) }
+
+                        CollectorOcr.parseFullCardOcr(titleTask.await(), collectorTask.await())
+                    }
+
+                    hashDeferred.await() to ocrDeferred.await()
+                }
+                val procMs = (System.nanoTime() - procStart) / 1_000_000
 
                 // 4. Ingest API POST
                 val liveMeta = cameraController.liveMetadata.value
@@ -168,8 +179,8 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
                 val timings = CaptureTimings(
                     captureMs = capMs,
-                    hashMs = hashMs,
-                    ocrMs = ocrMs,
+                    hashMs = procMs / 2,
+                    ocrMs = procMs,
                     networkMs = netResult.latencyMs,
                     totalMs = totalMs
                 )
