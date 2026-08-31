@@ -15,6 +15,7 @@ import com.decklotus.companion.camera.CameraController
 import com.decklotus.companion.data.AppSettings
 import com.decklotus.companion.data.ScannedCardItem
 import com.decklotus.companion.data.SettingsRepository
+import com.decklotus.companion.matcher.LocalCardResolver
 import com.decklotus.companion.network.*
 import com.decklotus.companion.util.SoundFeedback
 import com.decklotus.companion.vision.CardDetector
@@ -71,10 +72,16 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
     private val ingestApi = IngestApi()
-    private val mockServer = MockIngestServer()
+    private val localResolver = LocalCardResolver(application)
     private val soundFeedback = SoundFeedback(application)
     private val settleDetector = CardSettleDetector()
     private val cardDetector = CardDetector()
+
+    val isSessionTrayOpen = MutableStateFlow(false)
+
+    fun setSessionTrayOpen(isOpen: Boolean) {
+        isSessionTrayOpen.value = isOpen
+    }
 
     private var autoScanJob: Job? = null
 
@@ -90,20 +97,8 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            settingsFlow.collect { settings ->
-                if (settings.useMockServer && !mockServer.isRunning) {
-                    mockServer.start(8088)
-                } else if (!settings.useMockServer && mockServer.isRunning) {
-                    mockServer.stop()
-                }
-            }
+            localResolver.initialize()
         }
-    }
-
-    val isSessionTrayOpen = MutableStateFlow(false)
-
-    fun setSessionTrayOpen(isOpen: Boolean) {
-        isSessionTrayOpen.value = isOpen
     }
 
     fun startAutoScanLoop(cameraController: CameraController, previewView: PreviewView) {
@@ -214,7 +209,6 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         tier: String
     ) {
         _sessionCards.update { list ->
-            // Check if exact same printing and foil state already exists at the top of list
             val existingIndex = list.indexOfFirst {
                 it.name.equals(printing.name, ignoreCase = true) &&
                 it.setCode.equals(printing.setCode, ignoreCase = true) &&
@@ -292,7 +286,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     CardGeometry.warpQuad(rawBitmap, quad, CardGeometry.HASH_WIDTH, CardGeometry.HASH_HEIGHT)
                 }
 
-                // 3. Parallel Execution: DCT Hashing + Full-Card OCR
+                // 3. Parallel Execution: 256-bit DCT Hashing + Full-Card OCR
                 val procStart = System.nanoTime()
                 val (hashes, fullOcr) = coroutineScope {
                     val hashDeferred = async(Dispatchers.Default) {
@@ -308,41 +302,45 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 }
                 val procMs = (System.nanoTime() - procStart) / 1_000_000
 
-                // 4. Ingest API POST
-                val liveMeta = cameraController.liveMetadata.value
-                val request = IngestRequest(
-                    artHash = hashes.artHash,
-                    frameHash = hashes.frameHash,
-                    ocr = IngestOcrData(
-                        name = fullOcr.name,
-                        setCode = fullOcr.setCode,
-                        collector = fullOcr.collectorNumber,
-                        language = fullOcr.language,
-                        rawLines = fullOcr.rawLines,
-                        confidence = fullOcr.confidence
-                    ),
-                    capture = IngestCaptureMetadata(
-                        exposureNs = liveMeta.exposureTimeNs,
-                        iso = liveMeta.isoSensitivity,
-                        focusDist = liveMeta.focusDistanceDiopters
-                    ),
-                    commit = IngestCommitOptions(isFoil = fullOcr.isFoil)
-                )
-
-                val targetUrl = if (settings.useMockServer) "http://127.0.0.1:8088" else settings.baseUrl
-                val netResult = ingestApi.postIngest(targetUrl, settings.apiToken, request)
+                // 4. Resolve: On-Device Matcher across 112,815 MTG cards (or LAN Server)
+                val respStart = System.nanoTime()
+                val resp = if (settings.useMockServer) {
+                    localResolver.resolve(hashes.artHash, hashes.frameHash, fullOcr, fullOcr.isFoil)
+                } else {
+                    val liveMeta = cameraController.liveMetadata.value
+                    val request = IngestRequest(
+                        artHash = hashes.artHash,
+                        frameHash = hashes.frameHash,
+                        ocr = IngestOcrData(
+                            name = fullOcr.name,
+                            setCode = fullOcr.setCode,
+                            collector = fullOcr.collectorNumber,
+                            language = fullOcr.language,
+                            rawLines = fullOcr.rawLines,
+                            confidence = fullOcr.confidence
+                        ),
+                        capture = IngestCaptureMetadata(
+                            exposureNs = liveMeta.exposureTimeNs,
+                            iso = liveMeta.isoSensitivity,
+                            focusDist = liveMeta.focusDistanceDiopters
+                        ),
+                        commit = IngestCommitOptions(isFoil = fullOcr.isFoil)
+                    )
+                    val netResult = ingestApi.postIngest(settings.baseUrl, settings.apiToken, request)
+                    netResult.response ?: localResolver.resolve(hashes.artHash, hashes.frameHash, fullOcr, fullOcr.isFoil)
+                }
+                val respMs = (System.nanoTime() - respStart) / 1_000_000
                 val totalMs = (System.nanoTime() - totalStart) / 1_000_000
 
                 val timings = CaptureTimings(
                     captureMs = capMs,
                     hashMs = procMs / 2,
                     ocrMs = procMs,
-                    networkMs = netResult.latencyMs,
+                    networkMs = respMs,
                     totalMs = totalMs
                 )
 
-                val resp = netResult.response
-                if (resp != null && resp.printing != null && resp.tier != "unresolved") {
+                if (resp.printing != null && resp.tier != "unresolved") {
                     val isConfident = resp.tier == "confident"
                     triggerHaptic(isConfident)
                     if (settings.soundFeedbackEnabled) {
@@ -377,7 +375,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                         it.copy(
                             isCapturing = false,
                             lastResponse = resp,
-                            lastError = resp?.error ?: netResult.errorMessage,
+                            lastError = resp.error ?: "Card not recognized",
                             lastTimings = timings,
                             cradleState = SettleState.WAITING_FOR_CARD
                         )
@@ -421,6 +419,6 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         super.onCleared()
         stopAutoScanLoop()
         soundFeedback.release()
-        mockServer.stop()
+        localResolver.close()
     }
 }

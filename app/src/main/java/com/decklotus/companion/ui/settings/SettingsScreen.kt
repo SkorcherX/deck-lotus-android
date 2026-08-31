@@ -127,9 +127,9 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
-                            Text("Use Local Mock Server", fontWeight = FontWeight.Medium)
-                            Text("Test captures offline without LAN server", fontSize = 12.sp, color = TextSecondary)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("On-Device Offline Matching", fontWeight = FontWeight.Medium)
+                            Text("Instant ~10ms matching against all 112,815 cards using packed Scryfall hashes", fontSize = 12.sp, color = TextSecondary)
                         }
                         Switch(
                             checked = settings.useMockServer,
