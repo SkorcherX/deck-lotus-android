@@ -30,21 +30,32 @@ class CollectorOcrTest {
     }
 
     @Test
-    fun testParseModernHorizons3() {
-        val lines = listOf("MH3 \u00B7 EN", "0123")
+    fun testParseSOA() {
+        val lines = listOf("U 0045", "SOA \u2022 EN LORENZO GAGGIOTTI", "\u2122 & \u00A9 2024 Wizards of the Coast")
         val parsed = CollectorOcr.parseRawCollectorLines(lines)
 
-        assertEquals("MH3", parsed.setCode)
+        assertEquals("SOA", parsed.setCode)
+        assertEquals("0045", parsed.collectorNumber)
+        assertEquals("EN", parsed.language)
+    }
+
+    @Test
+    fun testParseBloomburrowPipeSeparator() {
+        val lines = listOf("BLB | EN", "0123/0281")
+        val parsed = CollectorOcr.parseRawCollectorLines(lines)
+
+        assertEquals("BLB", parsed.setCode)
         assertEquals("0123", parsed.collectorNumber)
         assertEquals("EN", parsed.language)
     }
 
     @Test
-    fun testParseCombinedSetNumber() {
-        val lines = listOf("WOE 0045")
+    fun testParseOutlawsSpaceSeparator() {
+        val lines = listOf("OTJ EN", "0245")
         val parsed = CollectorOcr.parseRawCollectorLines(lines)
 
-        assertEquals("WOE", parsed.setCode)
-        assertEquals("0045", parsed.collectorNumber)
+        assertEquals("OTJ", parsed.setCode)
+        assertEquals("0245", parsed.collectorNumber)
+        assertEquals("EN", parsed.language)
     }
 }

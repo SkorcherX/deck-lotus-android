@@ -11,7 +11,7 @@ import java.util.UUID
 
 /**
  * Local embedded mock server for milestone 1 walking skeleton verification.
- * Accurately echoes back the recognized MTG set code, card title, and collector number.
+ * Echoes exact recognized MTG set code, card title, and collector number.
  */
 class MockIngestServer(
     private val json: Json = Json { ignoreUnknownKeys = true }
@@ -49,7 +49,7 @@ class MockIngestServer(
                                 .setBody(json.encodeToString(IngestResponse.serializer(), emptyResponse))
                         }
 
-                        val resolvedSet = set ?: "SOA"
+                        val resolvedSet = set ?: "UNKNOWN"
                         val resolvedName = ocrName ?: when (resolvedSet) {
                             "ECC" -> "Cultivate"
                             "SOA", "WOE", "SPG" -> "Monstrous Rage"
@@ -57,10 +57,10 @@ class MockIngestServer(
                             "FDN" -> "Llanowar Elves"
                             else -> "Recognized Card"
                         }
-                        val resolvedCollector = collector ?: "0045"
+                        val resolvedCollector = collector ?: "0001"
 
                         val response = IngestResponse(
-                            tier = "confident",
+                            tier = if (resolvedSet != "UNKNOWN") "confident" else "probable",
                             printing = IngestResolvedPrinting(
                                 uuid = UUID.randomUUID().toString(),
                                 name = resolvedName,
