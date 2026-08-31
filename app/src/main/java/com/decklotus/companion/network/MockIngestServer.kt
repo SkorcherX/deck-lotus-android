@@ -1,5 +1,7 @@
 package com.decklotus.companion.network
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -19,7 +21,7 @@ class MockIngestServer(
     val isRunning: Boolean
         get() = server != null
 
-    fun start(port: Int = 8088): String {
+    suspend fun start(port: Int = 8088): String = withContext(Dispatchers.IO) {
         stop()
         val s = MockWebServer()
         s.dispatcher = object : Dispatcher() {
@@ -64,11 +66,13 @@ class MockIngestServer(
         }
         s.start(port)
         server = s
-        return s.url("/").toString().trimEnd('/')
+        s.url("/").toString().trimEnd('/')
     }
 
     fun stop() {
-        server?.shutdown()
+        try {
+            server?.shutdown()
+        } catch (_: Exception) {}
         server = null
     }
 }

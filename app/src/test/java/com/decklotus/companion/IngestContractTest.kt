@@ -16,12 +16,12 @@ class IngestContractTest {
     private var baseUrl: String = ""
 
     @Before
-    fun setUp() {
+    fun setUp() = runBlocking {
         baseUrl = mockServer.start(0) // Port 0 = choose free port
     }
 
     @After
-    fun tearDown() {
+    fun tearDown() = runBlocking {
         mockServer.stop()
     }
 
