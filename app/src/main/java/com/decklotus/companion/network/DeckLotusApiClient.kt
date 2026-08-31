@@ -23,26 +23,25 @@ sealed class ServerConnectionStatus {
 }
 
 @Serializable
-data class CommitScanItem(
-    val printingId: Int? = null,
+data class InventoryBulkAddItem(
+    val cardName: String,
+    val setCode: String? = null,
+    val collectorNumber: String? = null,
     val quantity: Int = 1,
-    val isFoil: Boolean = false,
-    val boardType: String = "mainboard"
+    val isFoil: Boolean = false
 )
 
 @Serializable
-data class CommitScanRequest(
-    val destination: String = "collection", // "collection" | "deck"
-    val deckId: Int? = null,
-    val items: List<CommitScanItem>
+data class InventoryBulkAddRequest(
+    val source: String = "scanner",
+    val items: List<InventoryBulkAddItem>
 )
 
 @Serializable
-data class CommitScanResponse(
-    val success: Boolean = true,
-    val count: Int? = null,
-    val message: String? = null,
-    val error: String? = null
+data class InventoryBulkAddResponse(
+    val added: Int = 0,
+    val failed: Int = 0,
+    val errors: List<String> = emptyList()
 )
 
 class DeckLotusApiClient(
@@ -53,7 +52,7 @@ class DeckLotusApiClient(
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
-        .followRedirects(false) // Handle Cloudflare 302 redirects explicitly
+        .followRedirects(false)
         .build()
 
     private val json: Json = Json {
@@ -135,23 +134,20 @@ class DeckLotusApiClient(
         }
     }
 
-    suspend fun commitBatch(
+    suspend fun commitBatchToCollection(
         baseUrl: String,
         token: String?,
-        destination: String = "collection",
-        deckId: Int? = null,
-        items: List<CommitScanItem>
-    ): Result<CommitScanResponse> = withContext(Dispatchers.IO) {
+        items: List<InventoryBulkAddItem>
+    ): Result<InventoryBulkAddResponse> = withContext(Dispatchers.IO) {
         val cleanBase = baseUrl.trim().trimEnd('/')
-        val url = "$cleanBase/api/scan/commit"
+        val url = "$cleanBase/api/inventory/bulk-add"
 
-        val payload = CommitScanRequest(
-            destination = destination,
-            deckId = deckId,
+        val payload = InventoryBulkAddRequest(
+            source = "scanner",
             items = items
         )
 
-        val bodyJson = json.encodeToString(CommitScanRequest.serializer(), payload)
+        val bodyJson = json.encodeToString(InventoryBulkAddRequest.serializer(), payload)
         Log.d("DeckLotusApiClient", "POST $url Payload: $bodyJson")
 
         val requestBody = bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -175,7 +171,7 @@ class DeckLotusApiClient(
                 val bodyText = response.body?.string().orEmpty()
                 Log.d("DeckLotusApiClient", "POST $url Response (${response.code}): $bodyText")
                 if (response.isSuccessful) {
-                    val parsed = json.decodeFromString(CommitScanResponse.serializer(), bodyText)
+                    val parsed = json.decodeFromString(InventoryBulkAddResponse.serializer(), bodyText)
                     Result.success(parsed)
                 } else {
                     Result.failure(Exception("HTTP ${response.code}: $bodyText"))

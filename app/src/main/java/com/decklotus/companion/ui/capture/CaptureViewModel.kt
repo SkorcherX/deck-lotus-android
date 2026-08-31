@@ -216,18 +216,22 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             _uiState.update { it.copy(isCommitting = true) }
             val items = currentCards.map { card ->
-                CommitScanItem(
-                    printingId = card.printingId,
+                InventoryBulkAddItem(
+                    cardName = card.name,
+                    setCode = card.setCode,
+                    collectorNumber = card.collectorNumber,
                     quantity = card.quantity,
                     isFoil = card.isFoil
                 )
             }
 
-            val result = apiClient.commitBatch(settings.baseUrl, settings.apiToken, "collection", null, items)
+            val result = apiClient.commitBatchToCollection(settings.baseUrl, settings.apiToken, items)
             _uiState.update { it.copy(isCommitting = false) }
 
             if (result.isSuccess) {
-                Toast.makeText(getApplication(), "✓ Committed ${currentCards.sumOf { it.quantity }} cards to collection!", Toast.LENGTH_LONG).show()
+                val res = result.getOrNull()
+                val added = res?.added ?: currentCards.sumOf { it.quantity }
+                Toast.makeText(getApplication(), "✓ Committed $added cards to collection!", Toast.LENGTH_LONG).show()
                 clearSession()
                 isSessionTrayOpen.value = false
             } else {
