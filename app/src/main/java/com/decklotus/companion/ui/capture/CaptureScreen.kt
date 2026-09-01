@@ -56,6 +56,7 @@ fun CaptureScreen(
     val totalCount by viewModel.totalCardsCount.collectAsState()
     val totalValueUsd by viewModel.totalSessionValueUsd.collectAsState()
     val totalFoils by viewModel.foilCardsCount.collectAsState()
+    val unpricedCount by viewModel.unpricedCardsCount.collectAsState()
 
     var showDiagnostics by remember { mutableStateOf(false) }
     var isSessionTrayOpen by remember { mutableStateOf(false) }
@@ -213,7 +214,15 @@ fun CaptureScreen(
                             fontFamily = FontFamily.Monospace
                         )
                         Text(
-                            text = String.format("$%.2f", totalValueUsd),
+                            // The count of what the figure leaves out rides
+                            // beside it. A bare total that had quietly counted
+                            // unpriced cards at $0.26 each was wrong by more
+                            // the longer the session ran.
+                            text = if (unpricedCount > 0) {
+                                String.format("$%.2f +%d?", totalValueUsd, unpricedCount)
+                            } else {
+                                String.format("$%.2f", totalValueUsd)
+                            },
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,

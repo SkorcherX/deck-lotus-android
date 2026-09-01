@@ -166,9 +166,11 @@ class LocalCardResolver(private val context: Context) {
                     setCode = bestPrinting.setCode,
                     collector = bestPrinting.collectorNumber,
                     isFoil = isFoil,
-                    marketPriceUsd = bestPrinting.priceUsd
+                    marketPriceUsd = bestPrinting.priceUsd,
+                    priceType = bestPrinting.priceType
                 ),
                 marketPriceUsd = bestPrinting.priceUsd,
+                priceType = bestPrinting.priceType,
                 hashDistanceBits = if (bestArtDist < 256) bestArtDist else null
             )
         }

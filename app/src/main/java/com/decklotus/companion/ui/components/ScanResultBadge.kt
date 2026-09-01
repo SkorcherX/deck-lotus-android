@@ -155,8 +155,12 @@ fun ScanResultBadge(
                     }
 
                     // Market price (Color-coded by Price Band matching webscanner)
-                    val priceVal = response?.marketPriceUsd ?: printing?.marketPriceUsd ?: 0.0
+                    val priceVal = response?.marketPriceUsd ?: printing?.marketPriceUsd
+                    val priceType = response?.priceType ?: printing?.priceType
                     val priceColor = when {
+                        // No price is its own state. Quoting $0.00 in the grey
+                        // "cheap" colour is a claim the data does not make.
+                        priceVal == null -> Color(0xFF64748B)
                         priceVal >= 20.0 -> Color(0xFFC084FC) // Purple ($20+)
                         priceVal >= 10.0 -> Color(0xFF60A5FA) // Blue ($10+)
                         priceVal >= 5.0 -> Color(0xFF4ADE80)  // Green ($5+)
@@ -165,7 +169,15 @@ fun ScanResultBadge(
                     }
 
                     Text(
-                        text = String.format("$%.2f", priceVal),
+                        // A dagger marks a figure taken from the foil row
+                        // because there was no normal one — the same warning
+                        // the web scanner shows, and the reason a $9.78 card
+                        // can otherwise read as $208.59.
+                        text = when {
+                            priceVal == null -> "no price"
+                            priceType == "foil" -> String.format("$%.2f†", priceVal)
+                            else -> String.format("$%.2f", priceVal)
+                        },
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = priceColor,

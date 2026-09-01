@@ -14,20 +14,77 @@ data class CardIdentity(
     val name: String,
     val setCode: String,
     val collectorNumber: String,
-    val priceCents: Int
+    /**
+     * Null when nobody has priced this printing — 15,361 of the 112,815 rows.
+     * It is not zero and it is not the bulk-common rate: the asset used to
+     * substitute $0.26 for these, which showed as a confident price for a card
+     * the server would decline to value at all.
+     */
+    val priceCents: Int?,
+    /**
+     * Which price row the figure came from, 'normal' or 'foil', or null with
+     * the price. A foil-derived figure is the most inflated one available —
+     * the 10,972 printings with no normal price are the showcase and
+     * serialised ones — so the UI has to be able to mark it rather than quote
+     * it flat. Mirrors what the server sends the web scanner.
+     */
+    val priceType: String?
 ) {
-    val priceUsd: Double
-        get() = priceCents / 100.0
+    val priceUsd: Double?
+        get() = priceCents?.let { it / 100.0 }
+
+    /** True when the only figure available came from the foil row. */
+    val isFoilDerivedPrice: Boolean
+        get() = priceType == "foil"
 }
 
 /**
  * High-speed SQLite helper for reading card identities (name, set, collector number, price, printing_id)
  * for all 112,815 MTG printings directly on-device.
  */
+/**
+ * The columns every identity query selects, in the order [readIdentities]
+ * reads them. One list so a schema change lands in one place rather than in
+ * five rawQuery strings that have to be kept in step by hand.
+ */
+private const val IDENTITY_COLUMNS =
+    "row_id, printing_id, name, set_code, collector_number, price_cents, price_type"
+
+/**
+ * Walk a cursor opened over [IDENTITY_COLUMNS] and close it.
+ *
+ * price_cents and price_type are read as nullable: getInt() would turn an
+ * unpriced row into a confident $0.00, which is the same lie the old $0.26
+ * placeholder told, one column further along.
+ */
+private fun android.database.Cursor.readIdentities(): List<CardIdentity> {
+    val list = mutableListOf<CardIdentity>()
+    try {
+        while (moveToNext()) {
+            list.add(
+                CardIdentity(
+                    rowId = getInt(0),
+                    printingId = getInt(1),
+                    name = getString(2),
+                    setCode = getString(3),
+                    collectorNumber = getString(4),
+                    priceCents = if (isNull(5)) null else getInt(5),
+                    priceType = if (isNull(6)) null else getString(6)
+                )
+            )
+        }
+    } finally {
+        close()
+    }
+    return list
+}
+
 class CardDatabaseHelper(private val context: Context) {
 
     private var db: SQLiteDatabase? = null
-    private val DB_VERSION = 3 // Bump to force refresh
+    // 4 adds price_type and makes price_cents nullable. A bump re-extracts
+    // the asset, which is the only way an installed app picks up a new schema.
+    private val DB_VERSION = 4
 
     suspend fun openDatabase() = withContext(Dispatchers.IO) {
         if (db != null && db!!.isOpen) return@withContext
@@ -108,69 +165,37 @@ class CardDatabaseHelper(private val context: Context) {
     private fun queryByNameAndSet(name: String, setCode: String): List<CardIdentity> {
         val database = db ?: return emptyList()
         val cursor = database.rawQuery(
-            "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE name = ? COLLATE NOCASE AND set_code = ? COLLATE NOCASE LIMIT 100",
+            "SELECT $IDENTITY_COLUMNS FROM printings WHERE name = ? COLLATE NOCASE AND set_code = ? COLLATE NOCASE LIMIT 100",
             arrayOf(name, setCode)
         )
-        val list = mutableListOf<CardIdentity>()
-        try {
-            while (cursor.moveToNext()) {
-                list.add(CardIdentity(cursor.getInt(0), cursor.getInt(1), cursor.getString(2), cursor.getString(3), cursor.getString(4), cursor.getInt(5)))
-            }
-        } finally {
-            cursor.close()
-        }
-        return list
+        return cursor.readIdentities()
     }
 
     private fun queryByNameExact(clean: String): List<CardIdentity> {
         val database = db ?: return emptyList()
         val cursor = database.rawQuery(
-            "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE name = ? COLLATE NOCASE LIMIT 250",
+            "SELECT $IDENTITY_COLUMNS FROM printings WHERE name = ? COLLATE NOCASE LIMIT 250",
             arrayOf(clean)
         )
-        val list = mutableListOf<CardIdentity>()
-        try {
-            while (cursor.moveToNext()) {
-                list.add(CardIdentity(cursor.getInt(0), cursor.getInt(1), cursor.getString(2), cursor.getString(3), cursor.getString(4), cursor.getInt(5)))
-            }
-        } finally {
-            cursor.close()
-        }
-        return list
+        return cursor.readIdentities()
     }
 
     private fun queryByNamePrefix(clean: String): List<CardIdentity> {
         val database = db ?: return emptyList()
         val cursor = database.rawQuery(
-            "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 150",
+            "SELECT $IDENTITY_COLUMNS FROM printings WHERE name LIKE ? LIMIT 150",
             arrayOf("$clean%")
         )
-        val list = mutableListOf<CardIdentity>()
-        try {
-            while (cursor.moveToNext()) {
-                list.add(CardIdentity(cursor.getInt(0), cursor.getInt(1), cursor.getString(2), cursor.getString(3), cursor.getString(4), cursor.getInt(5)))
-            }
-        } finally {
-            cursor.close()
-        }
-        return list
+        return cursor.readIdentities()
     }
 
     private fun queryByNameSubstring(clean: String): List<CardIdentity> {
         val database = db ?: return emptyList()
         val cursor = database.rawQuery(
-            "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE name LIKE ? LIMIT 100",
+            "SELECT $IDENTITY_COLUMNS FROM printings WHERE name LIKE ? LIMIT 100",
             arrayOf("%$clean%")
         )
-        val list = mutableListOf<CardIdentity>()
-        try {
-            while (cursor.moveToNext()) {
-                list.add(CardIdentity(cursor.getInt(0), cursor.getInt(1), cursor.getString(2), cursor.getString(3), cursor.getString(4), cursor.getInt(5)))
-            }
-        } finally {
-            cursor.close()
-        }
-        return list
+        return cursor.readIdentities()
     }
 
     fun getIdentitiesForRows(rowIds: List<Int>): Map<Int, CardIdentity> {
@@ -178,25 +203,10 @@ class CardDatabaseHelper(private val context: Context) {
         if (rowIds.isEmpty()) return emptyMap()
 
         val inClause = rowIds.joinToString(",")
-        val query = "SELECT row_id, printing_id, name, set_code, collector_number, price_cents FROM printings WHERE row_id IN ($inClause)"
-        val cursor = database.rawQuery(query, null)
-        val result = mutableMapOf<Int, CardIdentity>()
-
-        try {
-            while (cursor.moveToNext()) {
-                val rowId = cursor.getInt(0)
-                val printingId = cursor.getInt(1)
-                val name = cursor.getString(2)
-                val setCode = cursor.getString(3)
-                val collector = cursor.getString(4)
-                val priceCents = cursor.getInt(5)
-                result[rowId] = CardIdentity(rowId, printingId, name, setCode, collector, priceCents)
-            }
-        } finally {
-            cursor.close()
-        }
-
-        return result
+        val query = "SELECT $IDENTITY_COLUMNS FROM printings WHERE row_id IN ($inClause)"
+        return database.rawQuery(query, null)
+            .readIdentities()
+            .associateBy { it.rowId }
     }
 
     fun close() {

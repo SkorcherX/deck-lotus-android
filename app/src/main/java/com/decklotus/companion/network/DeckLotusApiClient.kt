@@ -37,12 +37,113 @@ data class InventoryBulkAddRequest(
     val items: List<InventoryBulkAddItem>
 )
 
+/**
+ * One line the server could not resolve.
+ *
+ * cardName is nullable because the server has two error paths and only one of
+ * them fills it: a line given as set code and collector number with no name
+ * comes back with cardName absent. Declaring it non-null makes an otherwise
+ * fine response fail to parse.
+ */
+@Serializable
+data class InventoryBulkAddError(
+    val cardName: String? = null,
+    val setCode: String? = null,
+    val collectorNumber: String? = null,
+    val error: String
+)
+
+/**
+ * What POST /api/inventory/bulk-add actually returns.
+ *
+ * `errors` is a list of objects, not of strings — it was declared as
+ * List<String> here, which parsed fine for as long as every card resolved and
+ * threw the moment one did not. The throw surfaced as "the commit failed"
+ * *after* the server had already written every line that did resolve, so
+ * re-scanning the batch added those cards a second time.
+ *
+ * `added` counts copies, not lines: a line of quantity 4 adds 4.
+ */
 @Serializable
 data class InventoryBulkAddResponse(
     val added: Int = 0,
     val failed: Int = 0,
-    val errors: List<String> = emptyList()
+    val errors: List<InventoryBulkAddError> = emptyList(),
+    /** Ties one import together in the server's audit log, for undoing it. */
+    val batchId: String? = null
 )
+
+/**
+ * The outcome of a whole commit, which may have been several requests.
+ *
+ * The distinction that matters is [uncommitted] versus [rejected]. A rejected
+ * line reached the server and was refused: re-sending it will fail again, and
+ * it needs a human. An uncommitted line is one whose fate is unknown — the
+ * chunk carrying it never got a reply — and re-sending it may duplicate what
+ * is already there. Collapsing the two into "failed" is what made the old
+ * failure path dangerous.
+ */
+data class CommitOutcome(
+    val addedCopies: Int,
+    val rejected: List<InventoryBulkAddError>,
+    val uncommitted: List<InventoryBulkAddItem>,
+    val batchIds: List<String>,
+    val transportError: String? = null
+) {
+    val isCleanSuccess: Boolean
+        get() = rejected.isEmpty() && uncommitted.isEmpty() && transportError == null
+}
+
+/** Whether the server is mid-rebuild. See GET /api/system/maintenance. */
+@Serializable
+data class MaintenanceStatus(
+    val state: String = "idle",
+    val label: String? = null,
+    val percent: Int? = null
+) {
+    /**
+     * The states in which card lookups cannot be trusted.
+     *
+     * scripts/import-mtgjson.js empties `printings` for the minutes it runs, so
+     * a commit landing in that window resolves nothing and comes back as a
+     * batch of "No printing found" — a whole box reported as unreadable when
+     * the scans were fine.
+     */
+    val blocksWrites: Boolean
+        get() = state == "running" || state == "scheduled"
+}
+
+/**
+ * How many lines go in one bulk-add.
+ *
+ * The server caps this at 1000 and answers over the limit with a 400, so a big
+ * box is split rather than refused. Each chunk is its own commit with its own
+ * result: chunk three failing says nothing about chunks one and two, which are
+ * already written.
+ */
+private const val BULK_CHUNK_SIZE = 1000
+
+/**
+ * Attach credentials.
+ *
+ * One header, not two. This used to send X-API-Key *and* an Authorization
+ * bearer holding the same value; the server tries the JWT branch first, fails
+ * to verify an API key as a token, and falls through — so it worked, at the
+ * cost of a wasted verify per request and a 401 that could have come from
+ * either header. A token that really is a JWT still goes in Authorization.
+ */
+private fun Request.Builder.authenticate(token: String?): Request.Builder {
+    val clean = token?.trim().orEmpty()
+    if (clean.isBlank()) return this
+
+    return if (clean.startsWith("Bearer ", ignoreCase = true)) {
+        addHeader("Authorization", clean)
+    } else if (clean.count { it == '.' } == 2) {
+        addHeader("Authorization", "Bearer $clean")
+    } else {
+        addHeader("X-API-Key", clean)
+    }
+}
 
 class DeckLotusApiClient(
     val cookieJar: CloudflareCookieJar = CloudflareCookieJar()
@@ -73,15 +174,7 @@ class DeckLotusApiClient(
             .url(url)
             .get()
 
-        if (!token.isNullOrBlank()) {
-            val clean = token.trim()
-            requestBuilder.addHeader("X-API-Key", clean)
-            if (!clean.startsWith("Bearer ", ignoreCase = true)) {
-                requestBuilder.addHeader("Authorization", "Bearer $clean")
-            } else {
-                requestBuilder.addHeader("Authorization", clean)
-            }
-        }
+        requestBuilder.authenticate(token)
 
         try {
             client.newCall(requestBuilder.build()).execute().use { response ->
@@ -134,52 +227,100 @@ class DeckLotusApiClient(
         }
     }
 
+    /**
+     * Is the server safe to write to right now?
+     *
+     * Unauthenticated on purpose server-side — it has to be answerable while
+     * the API-key check itself cannot read the database. A failure to reach it
+     * is reported as null and treated as "go ahead": this is a guard against a
+     * known window, not a reason to block a commit on one extra request.
+     */
+    suspend fun maintenanceStatus(baseUrl: String): MaintenanceStatus? = withContext(Dispatchers.IO) {
+        val url = "${baseUrl.trim().trimEnd('/')}/api/system/maintenance"
+        try {
+            client.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                json.decodeFromString(MaintenanceStatus.serializer(), response.body?.string().orEmpty())
+            }
+        } catch (e: Exception) {
+            Log.d("DeckLotusApiClient", "Maintenance probe failed, proceeding: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Send a scanned session to the collection.
+     *
+     * Split into chunks the server will accept, and reported as a
+     * [CommitOutcome] rather than a Result, because "it failed" is not a
+     * useful answer here: the endpoint writes line by line with no transaction,
+     * so a response can carry both cards that went in and cards that did not,
+     * and a request that times out may still have written everything. Whatever
+     * the caller does next has to distinguish those.
+     */
     suspend fun commitBatchToCollection(
         baseUrl: String,
         token: String?,
         items: List<InventoryBulkAddItem>
-    ): Result<InventoryBulkAddResponse> = withContext(Dispatchers.IO) {
+    ): CommitOutcome = withContext(Dispatchers.IO) {
         val cleanBase = baseUrl.trim().trimEnd('/')
         val url = "$cleanBase/api/inventory/bulk-add"
 
-        val payload = InventoryBulkAddRequest(
-            source = "scanner",
-            items = items
-        )
+        var addedCopies = 0
+        val rejected = mutableListOf<InventoryBulkAddError>()
+        val uncommitted = mutableListOf<InventoryBulkAddItem>()
+        val batchIds = mutableListOf<String>()
+        var transportError: String? = null
 
-        val bodyJson = json.encodeToString(InventoryBulkAddRequest.serializer(), payload)
-        Log.d("DeckLotusApiClient", "POST $url Payload: $bodyJson")
-
-        val requestBody = bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType())
-
-        val requestBuilder = Request.Builder()
-            .url(url)
-            .post(requestBody)
-
-        if (!token.isNullOrBlank()) {
-            val clean = token.trim()
-            requestBuilder.addHeader("X-API-Key", clean)
-            if (!clean.startsWith("Bearer ", ignoreCase = true)) {
-                requestBuilder.addHeader("Authorization", "Bearer $clean")
-            } else {
-                requestBuilder.addHeader("Authorization", clean)
+        for (chunk in items.chunked(BULK_CHUNK_SIZE)) {
+            // Once a chunk has failed for a reason that will not change — no
+            // network, a rejected key — the rest are not worth sending. They
+            // are recorded as uncommitted so the session keeps them.
+            if (transportError != null) {
+                uncommitted += chunk
+                continue
             }
-        }
 
-        try {
-            client.newCall(requestBuilder.build()).execute().use { response ->
-                val bodyText = response.body?.string().orEmpty()
-                Log.d("DeckLotusApiClient", "POST $url Response (${response.code}): $bodyText")
-                if (response.isSuccessful) {
-                    val parsed = json.decodeFromString(InventoryBulkAddResponse.serializer(), bodyText)
-                    Result.success(parsed)
-                } else {
-                    Result.failure(Exception("HTTP ${response.code}: $bodyText"))
+            val payload = InventoryBulkAddRequest(source = "scanner", items = chunk)
+            val bodyJson = json.encodeToString(InventoryBulkAddRequest.serializer(), payload)
+            val requestBody = bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType())
+
+            val request = Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .authenticate(token)
+                .build()
+
+            try {
+                client.newCall(request).execute().use { response ->
+                    val bodyText = response.body?.string().orEmpty()
+                    Log.d("DeckLotusApiClient", "POST $url (${chunk.size} items) -> ${response.code}")
+
+                    if (response.isSuccessful) {
+                        val parsed = json.decodeFromString(InventoryBulkAddResponse.serializer(), bodyText)
+                        addedCopies += parsed.added
+                        rejected += parsed.errors
+                        parsed.batchId?.let { batchIds += it }
+                    } else {
+                        transportError = "HTTP ${response.code}: ${bodyText.take(300)}"
+                        uncommitted += chunk
+                    }
                 }
+            } catch (e: Exception) {
+                // Includes a response that would not parse. The write may well
+                // have happened, so these are uncommitted, never rejected.
+                transportError = e.localizedMessage ?: e.javaClass.simpleName
+                Log.e("DeckLotusApiClient", "POST $url failed: $transportError")
+                uncommitted += chunk
             }
-        } catch (e: Exception) {
-            Log.e("DeckLotusApiClient", "POST $url Exception: ${e.message}")
-            Result.failure(e)
         }
+
+        CommitOutcome(
+            addedCopies = addedCopies,
+            rejected = rejected,
+            uncommitted = uncommitted,
+            batchIds = batchIds,
+            transportError = transportError
+        )
     }
 }

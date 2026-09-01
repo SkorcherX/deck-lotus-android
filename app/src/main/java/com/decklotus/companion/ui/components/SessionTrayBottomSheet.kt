@@ -476,11 +476,18 @@ private fun ScannedCardRowItem(
             }
 
             // Price Line
+            val each = item.marketPriceUsd
+            val total = item.totalItemPriceUsd
             Text(
-                text = "${String.format("$%.2f", item.marketPriceUsd)} each • Total: ${String.format("$%.2f", item.totalItemPriceUsd)}",
+                text = if (each == null || total == null) {
+                    "No price on record"
+                } else {
+                    val dagger = if (item.isFoilDerivedPrice) "†" else ""
+                    "${String.format("$%.2f", each)}$dagger each • Total: ${String.format("$%.2f", total)}$dagger"
+                },
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
-                color = Color(0xFF9ECE6A),
+                color = if (each == null) Color(0xFF7A8499) else Color(0xFF9ECE6A),
                 fontFamily = FontFamily.Monospace
             )
         }

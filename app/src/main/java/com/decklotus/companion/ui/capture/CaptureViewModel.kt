@@ -35,14 +35,49 @@ enum class PriceBand(val minPrice: Double, val colorArgb: Int, val bandName: Str
     BLUE(10.0, 0xFF60A5FA.toInt(), "blue"),
     GREEN(5.0, 0xFF4ADE80.toInt(), "green"),
     YELLOW(1.0, 0xFFFBBF24.toInt(), "yellow"),
-    GREY(Double.NEGATIVE_INFINITY, 0xFFCBD5E1.toInt(), "grey");
+    GREY(Double.NEGATIVE_INFINITY, 0xFFCBD5E1.toInt(), "grey"),
+
+    /**
+     * No price at all, which is a different statement from "cheap".
+     *
+     * 15,361 printings have no tcgplayer row, and grey is the band that says a
+     * card is worth setting aside — pulsing it for a card nobody has priced
+     * tells the person sorting the box something the data does not support.
+     * Kept out of [fromPrice]'s threshold walk by its own branch; its
+     * NEGATIVE_INFINITY minimum never gets compared.
+     */
+    UNKNOWN(Double.NEGATIVE_INFINITY, 0xFF64748B.toInt(), "unknown");
 
     companion object {
         fun fromPrice(price: Double?): PriceBand {
-            val p = price ?: 0.0
-            return entries.firstOrNull { p >= it.minPrice } ?: GREY
+            if (price == null) return UNKNOWN
+            return entries.firstOrNull { it != UNKNOWN && price >= it.minPrice } ?: GREY
         }
     }
+}
+
+/**
+ * Identity of one committed line, for matching a server response back to the
+ * cards on the device.
+ *
+ * The finish is part of it because it is part of the server's unique key — a
+ * foil and a non-foil of the same printing are separate rows in
+ * `owned_printings` and must stay separate lines here. It is nullable only for
+ * the return trip: a rejection reports the fields the line was entered with and
+ * does not echo isFoil, so a null there means "either finish" rather than
+ * "non-foil", which would leave a rejected foil in the session forever.
+ */
+data class CommitKey(
+    val name: String?,
+    val setCode: String?,
+    val collectorNumber: String?,
+    val isFoil: Boolean?
+) {
+    fun matches(name: String, setCode: String, collectorNumber: String, isFoil: Boolean): Boolean =
+        (this.name == null || this.name.equals(name, ignoreCase = true)) &&
+            (this.setCode == null || this.setCode.equals(setCode, ignoreCase = true)) &&
+            (this.collectorNumber == null || this.collectorNumber.equals(collectorNumber, ignoreCase = true)) &&
+            (this.isFoil == null || this.isFoil == isFoil)
 }
 
 data class CaptureTimings(
@@ -84,9 +119,22 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         list.sumOf { it.quantity }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
+    /** Only the cards that have a price. See [unpricedCardsCount]. */
     val totalSessionValueUsd: StateFlow<Double> = _sessionCards.map { list ->
-        list.sumOf { it.totalItemPriceUsd }
+        list.sumOf { it.totalItemPriceUsd ?: 0.0 }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, 0.0)
+
+    /**
+     * Copies the session total could not account for.
+     *
+     * Shown beside the total rather than folded into it: the total is what the
+     * box is worth as far as anyone knows, and a bare figure that silently
+     * counted unpriced cards as $0 — or, as it used to, as $0.26 each — reads
+     * as more precise than it is.
+     */
+    val unpricedCardsCount: StateFlow<Int> = _sessionCards.map { list ->
+        list.filter { it.marketPriceUsd == null }.sumOf { it.quantity }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
     val foilCardsCount: StateFlow<Int> = _sessionCards.map { list ->
         list.filter { it.isFoil }.sumOf { it.quantity }
@@ -238,40 +286,95 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
         viewModelScope.launch {
             _uiState.update { it.copy(isCommitting = true) }
-            val items = currentCards
-                .groupBy { Triple(it.name, it.setCode, Pair(it.collectorNumber, it.isFoil)) }
-                .map { (key, group) ->
-                    InventoryBulkAddItem(
-                        cardName = key.first,
-                        setCode = key.second,
-                        collectorNumber = key.third.first,
-                        quantity = group.sumOf { it.quantity },
-                        isFoil = key.third.second
-                    )
-                }
+
+            // A commit landing while the server rebuilds its card tables comes
+            // back as a batch of "No printing found" — every scan in the box
+            // reported as unreadable when nothing was wrong with them. Hold the
+            // session instead; it is still on the device and still valid in
+            // twenty minutes.
+            val maintenance = apiClient.maintenanceStatus(settings.baseUrl)
+            if (maintenance?.blocksWrites == true) {
+                _uiState.update { it.copy(isCommitting = false) }
+                val what = maintenance.label ?: "A card data update"
+                Toast.makeText(
+                    getApplication(),
+                    "$what is in progress — session kept, try again when it finishes",
+                    Toast.LENGTH_LONG
+                ).show()
+                return@launch
+            }
+
+            // One line per printing and finish, which is the server's own unique
+            // key. Grouping on name alone would merge a foil into its non-foil.
+            val itemsByKey = currentCards.groupBy {
+                CommitKey(it.name, it.setCode, it.collectorNumber, it.isFoil)
+            }
+            // Read off the grouped cards rather than the key: CommitKey's
+            // fields are nullable for the return trip, and the cards they came
+            // from are not.
+            val items = itemsByKey.map { (_, group) ->
+                val first = group.first()
+                InventoryBulkAddItem(
+                    cardName = first.name,
+                    setCode = first.setCode,
+                    collectorNumber = first.collectorNumber,
+                    quantity = group.sumOf { it.quantity },
+                    isFoil = first.isFoil
+                )
+            }
 
             val targetName = settings.activeProfile?.name ?: "Collection"
-            val token = settings.effectiveToken
-            val result = apiClient.commitBatchToCollection(settings.baseUrl, token, items)
+            val outcome = apiClient.commitBatchToCollection(settings.baseUrl, settings.effectiveToken, items)
             _uiState.update { it.copy(isCommitting = false) }
 
-            if (result.isSuccess) {
-                val res = result.getOrNull()
-                val added = res?.added ?: currentCards.sumOf { it.quantity }
-                Toast.makeText(getApplication(), "✓ Committed $added cards to $targetName's collection!", Toast.LENGTH_LONG).show()
+            if (outcome.isCleanSuccess) {
+                Toast.makeText(
+                    getApplication(),
+                    "✓ Committed ${outcome.addedCopies} cards to $targetName's collection!",
+                    Toast.LENGTH_LONG
+                ).show()
                 clearSession()
                 isSessionTrayOpen.value = false
-            } else {
-                val errorMsg = result.exceptionOrNull()?.message ?: "Commit failed"
-                Toast.makeText(getApplication(), "Commit error: $errorMsg", Toast.LENGTH_LONG).show()
+                return@launch
             }
+
+            // Anything the server wrote is gone from the session; anything it
+            // refused, or never answered about, stays. Clearing the whole thing
+            // because part of it failed loses good scans; keeping the whole
+            // thing invites a second commit of cards already added.
+            val keptKeys = (
+                outcome.rejected.map { CommitKey(it.cardName, it.setCode, it.collectorNumber, null) } +
+                outcome.uncommitted.map { CommitKey(it.cardName, it.setCode, it.collectorNumber, it.isFoil) }
+            ).toSet()
+
+            _sessionCards.update { cards ->
+                cards.filter { card ->
+                    keptKeys.any { it.matches(card.name, card.setCode, card.collectorNumber, card.isFoil) }
+                }
+            }
+
+            val message = buildString {
+                if (outcome.addedCopies > 0) append("Added ${outcome.addedCopies} to $targetName. ")
+                if (outcome.rejected.isNotEmpty()) {
+                    append("${outcome.rejected.size} not recognised — kept for review. ")
+                }
+                if (outcome.uncommitted.isNotEmpty()) {
+                    append(
+                        "${outcome.uncommitted.size} unsent (${outcome.transportError ?: "no reply"}) — " +
+                        "kept, but check the collection before resending. "
+                    )
+                }
+            }.trim()
+
+            Toast.makeText(getApplication(), message, Toast.LENGTH_LONG).show()
         }
     }
 
     private fun addCardToSession(
         printing: IngestResolvedPrinting,
         isFoil: Boolean,
-        marketPrice: Double,
+        marketPrice: Double?,
+        priceType: String?,
         thumbnail: Bitmap?,
         tier: String
     ) {
@@ -287,6 +390,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     isFoil = isFoil,
                     quantity = 1,
                     marketPriceUsd = marketPrice,
+                    priceType = priceType,
                     thumbnail = thumbnail,
                     tier = tier,
                     timestamp = System.currentTimeMillis()
@@ -377,7 +481,11 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 )
 
                 if (resp.printing != null && resp.tier != "unresolved") {
-                    val priceVal = resp.marketPriceUsd ?: resp.printing.marketPriceUsd ?: 0.0
+                    // Null all the way through when nothing priced this
+                    // printing, so the band reads UNKNOWN rather than pulsing
+                    // grey for "cheap".
+                    val priceVal = resp.marketPriceUsd ?: resp.printing.marketPriceUsd
+                    val priceType = resp.priceType ?: resp.printing.priceType
                     val band = PriceBand.fromPrice(priceVal)
                     val isConfident = resp.tier == "confident"
 
@@ -391,6 +499,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                         printing = resp.printing,
                         isFoil = fullOcr.isFoil || resp.printing.isFoil,
                         marketPrice = priceVal,
+                        priceType = priceType,
                         thumbnail = rectified,
                         tier = resp.tier
                     )

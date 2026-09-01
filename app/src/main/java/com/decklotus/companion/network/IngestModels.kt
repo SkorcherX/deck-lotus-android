@@ -2,6 +2,15 @@ package com.decklotus.companion.network
 
 import kotlinx.serialization.Serializable
 
+/**
+ * What a scan resolved to.
+ *
+ * These started life as the wire format of a POST /api/scan/ingest that the
+ * server never had; the matching now happens on-device in LocalCardResolver
+ * and these are its result types, which is why the request half of the pair is
+ * gone. Cards reach the server through POST /api/inventory/bulk-add — see
+ * DeckLotusApiClient.
+ */
 enum class ScanTier(val key: String) {
     CONFIDENT("confident"),
     PROBABLE("probable"),
@@ -24,31 +33,6 @@ data class IngestOcrData(
 )
 
 @Serializable
-data class IngestCaptureMetadata(
-    val exposureNs: Long = 0,
-    val iso: Int = 0,
-    val focusDist: Float = 0.0f,
-    val device: String = "pixel-10-pro",
-    val rig: String = "card-slinger-3.0"
-)
-
-@Serializable
-data class IngestCommitOptions(
-    val mode: String = "inventory", // "inventory" | "deck"
-    val deckId: String? = null,
-    val isFoil: Boolean = false
-)
-
-@Serializable
-data class IngestRequest(
-    val artHash: String,
-    val frameHash: String? = null,
-    val ocr: IngestOcrData,
-    val capture: IngestCaptureMetadata,
-    val commit: IngestCommitOptions
-)
-
-@Serializable
 data class IngestResolvedPrinting(
     val printingId: Int? = null,
     val uuid: String,
@@ -56,7 +40,10 @@ data class IngestResolvedPrinting(
     val setCode: String,
     val collector: String,
     val isFoil: Boolean = false,
-    val marketPriceUsd: Double? = null
+    /** Null when this printing has no price at all. Never a stand-in figure. */
+    val marketPriceUsd: Double? = null,
+    /** 'normal', 'foil' when that is the only row there was, or null. */
+    val priceType: String? = null
 )
 
 @Serializable
@@ -67,5 +54,6 @@ data class IngestResponse(
     val committed: Boolean = false,
     val hashDistanceBits: Int? = null,
     val marketPriceUsd: Double? = null,
+    val priceType: String? = null,
     val error: String? = null
 )
