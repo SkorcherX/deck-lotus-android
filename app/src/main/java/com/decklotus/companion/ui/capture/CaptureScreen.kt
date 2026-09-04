@@ -30,6 +30,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.decklotus.companion.camera.CameraController
 import com.decklotus.companion.ui.components.CameraPreviewView
+import com.decklotus.companion.ui.components.CloudflarePortalDialog
 import com.decklotus.companion.ui.components.DiagnosticsOverlay
 import com.decklotus.companion.ui.components.ScanResultBadge
 import com.decklotus.companion.ui.components.SessionTrayBottomSheet
@@ -57,6 +58,7 @@ fun CaptureScreen(
     val totalValueUsd by viewModel.totalSessionValueUsd.collectAsState()
     val totalFoils by viewModel.foilCardsCount.collectAsState()
     val unpricedCount by viewModel.unpricedCardsCount.collectAsState()
+    val isPortalOpen by viewModel.isPortalOpen.collectAsState()
 
     var showDiagnostics by remember { mutableStateOf(false) }
     var isSessionTrayOpen by remember { mutableStateOf(false) }
@@ -500,6 +502,15 @@ fun CaptureScreen(
                 onClearAll = { viewModel.clearSession() },
                 onSelectProfile = { viewModel.selectActiveProfile(it) },
                 onCommitToCollection = { viewModel.commitBatchToCollection() }
+            )
+        }
+
+        // Cloudflare Access Captive Portal Modal
+        if (isPortalOpen) {
+            CloudflarePortalDialog(
+                url = settings.baseUrl,
+                onDismiss = { viewModel.closeCloudflarePortal() },
+                onAuthSuccess = { viewModel.onCloudflareAuthSuccess() }
             )
         }
     }

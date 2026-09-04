@@ -88,10 +88,11 @@ data class CommitOutcome(
     val rejected: List<InventoryBulkAddError>,
     val uncommitted: List<InventoryBulkAddItem>,
     val batchIds: List<String>,
-    val transportError: String? = null
+    val transportError: String? = null,
+    val isCloudflareAuthRequired: Boolean = false
 ) {
     val isCleanSuccess: Boolean
-        get() = rejected.isEmpty() && uncommitted.isEmpty() && transportError == null
+        get() = rejected.isEmpty() && uncommitted.isEmpty() && transportError == null && !isCloudflareAuthRequired
 }
 
 /** Whether the server is mid-rebuild. See GET /api/system/maintenance. */
@@ -161,6 +162,36 @@ class DeckLotusApiClient(
         encodeDefaults = true
     }
 
+    companion object {
+        fun isCloudflareChallenge(
+            code: Int,
+            location: String,
+            contentType: String,
+            cfRay: String?,
+            wwwAuth: String?,
+            bodyText: String
+        ): Boolean {
+            if (code == 302 || code == 307) {
+                if (location.contains("cloudflareaccess.com") ||
+                    location.contains("/cdn-cgi/access/") ||
+                    wwwAuth?.contains("Cloudflare-Access", ignoreCase = true) == true
+                ) {
+                    return true
+                }
+            }
+            if (code == 403 || contentType.contains("text/html")) {
+                if (cfRay != null ||
+                    wwwAuth?.contains("Cloudflare-Access", ignoreCase = true) == true ||
+                    bodyText.contains("Cloudflare", ignoreCase = true) ||
+                    bodyText.contains("cloudflareaccess.com", ignoreCase = true)
+                ) {
+                    return true
+                }
+            }
+            return false
+        }
+    }
+
     suspend fun testConnection(baseUrl: String, token: String?): ServerConnectionStatus = withContext(Dispatchers.IO) {
         val cleanBase = baseUrl.trim().trimEnd('/')
         if (cleanBase.isBlank() || !cleanBase.startsWith("http")) {
@@ -183,21 +214,14 @@ class DeckLotusApiClient(
                 val contentType = response.header("Content-Type").orEmpty().lowercase()
                 val cfRay = response.header("CF-Ray")
                 val location = response.header("Location").orEmpty()
+                val wwwAuth = response.header("Www-Authenticate")
                 val bodyText = response.body?.string().orEmpty()
 
                 Log.d("DeckLotusApiClient", "Ping $url -> Code: $code, Content-Type: $contentType, CF-Ray: $cfRay, Body: $bodyText")
 
                 // 1. Cloudflare Access challenge detection
-                if (code == 302 || code == 307) {
-                    if (location.contains("cloudflareaccess.com") || location.contains("/cdn-cgi/access/")) {
-                        return@withContext ServerConnectionStatus.CloudflareAuthRequired()
-                    }
-                }
-
-                if (code == 403 || contentType.contains("text/html")) {
-                    if (cfRay != null || bodyText.contains("Cloudflare", ignoreCase = true) || bodyText.contains("cloudflareaccess.com", ignoreCase = true)) {
-                        return@withContext ServerConnectionStatus.CloudflareAuthRequired()
-                    }
+                if (isCloudflareChallenge(code, location, contentType, cfRay, wwwAuth, bodyText)) {
+                    return@withContext ServerConnectionStatus.CloudflareAuthRequired()
                 }
 
                 // 2. Deck Lotus API Auth rejection
@@ -271,6 +295,7 @@ class DeckLotusApiClient(
         val uncommitted = mutableListOf<InventoryBulkAddItem>()
         val batchIds = mutableListOf<String>()
         var transportError: String? = null
+        var isCloudflareAuthRequired = false
 
         for (chunk in items.chunked(BULK_CHUNK_SIZE)) {
             // Once a chunk has failed for a reason that will not change — no
@@ -293,16 +318,25 @@ class DeckLotusApiClient(
 
             try {
                 client.newCall(request).execute().use { response ->
+                    val code = response.code
+                    val location = response.header("Location").orEmpty()
+                    val contentType = response.header("Content-Type").orEmpty().lowercase()
+                    val cfRay = response.header("CF-Ray")
+                    val wwwAuth = response.header("Www-Authenticate")
                     val bodyText = response.body?.string().orEmpty()
-                    Log.d("DeckLotusApiClient", "POST $url (${chunk.size} items) -> ${response.code}")
+                    Log.d("DeckLotusApiClient", "POST $url (${chunk.size} items) -> $code")
 
                     if (response.isSuccessful) {
                         val parsed = json.decodeFromString(InventoryBulkAddResponse.serializer(), bodyText)
                         addedCopies += parsed.added
                         rejected += parsed.errors
                         parsed.batchId?.let { batchIds += it }
+                    } else if (isCloudflareChallenge(code, location, contentType, cfRay, wwwAuth, bodyText)) {
+                        transportError = "Cloudflare Access session expired. Log in via CF Portal."
+                        isCloudflareAuthRequired = true
+                        uncommitted += chunk
                     } else {
-                        transportError = "HTTP ${response.code}: ${bodyText.take(300)}"
+                        transportError = "HTTP $code: ${bodyText.take(300)}"
                         uncommitted += chunk
                     }
                 }
@@ -320,7 +354,8 @@ class DeckLotusApiClient(
             rejected = rejected,
             uncommitted = uncommitted,
             batchIds = batchIds,
-            transportError = transportError
+            transportError = transportError,
+            isCloudflareAuthRequired = isCloudflareAuthRequired
         )
     }
 }

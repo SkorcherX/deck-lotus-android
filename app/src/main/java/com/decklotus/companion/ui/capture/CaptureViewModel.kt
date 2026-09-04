@@ -152,6 +152,22 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         isSessionTrayOpen.value = isOpen
     }
 
+    private val _isPortalOpen = MutableStateFlow(false)
+    val isPortalOpen: StateFlow<Boolean> = _isPortalOpen.asStateFlow()
+
+    fun openCloudflarePortal() {
+        _isPortalOpen.value = true
+    }
+
+    fun closeCloudflarePortal() {
+        _isPortalOpen.value = false
+    }
+
+    fun onCloudflareAuthSuccess() {
+        _isPortalOpen.value = false
+        Toast.makeText(getApplication(), "✓ Cloudflare Access authenticated. Tap Commit to sync batch.", Toast.LENGTH_LONG).show()
+    }
+
     private var autoScanJob: Job? = null
 
     private val vibrator: Vibrator? by lazy {
@@ -335,6 +351,16 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 ).show()
                 clearSession()
                 isSessionTrayOpen.value = false
+                return@launch
+            }
+
+            if (outcome.isCloudflareAuthRequired) {
+                _isPortalOpen.value = true
+                Toast.makeText(
+                    getApplication(),
+                    "Cloudflare Access login required. Opening login portal...",
+                    Toast.LENGTH_LONG
+                ).show()
                 return@launch
             }
 
