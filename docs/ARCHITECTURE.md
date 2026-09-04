@@ -34,6 +34,7 @@ is used for syncing inventory, collection modifications, deck updates, and trade
 The server may be hosted behind a Cloudflare Tunnel secured by Cloudflare Zero Trust (Google OAuth / Email OTP):
 - **Captive Portal (`CloudflarePortalDialog.kt`)**: Embedded WebView modal configured with mobile Chrome User-Agent so Google OAuth and Email OTP complete smoothly.
 - **Cookie Synchronization (`CloudflareCookieJar.kt`)**: Automatically passes `CF_Authorization` session cookies across all OkHttp network requests.
+- **Challenge Detection & Flow**: HTTP 302/307 redirects to Cloudflare Access login URLs or 403 Access challenges are explicitly detected on connection checks and batch commits (`DeckLotusApiClient.isCloudflareChallenge`). Expired sessions seamlessly trigger the captive portal login modal in-place without losing scanned cards in the tray.
 
 ### 2. Authentication
 - Headers sent: `X-API-Key: <token>` and `Authorization: Bearer <token>`.
