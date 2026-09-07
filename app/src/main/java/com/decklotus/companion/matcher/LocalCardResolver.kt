@@ -52,13 +52,26 @@ class LocalCardResolver(private val context: Context) {
             if (nameCandidates.isNotEmpty()) {
                 nameCandidates
             } else {
-                // Fallback: If OCR title missed entirely, search 112,815 perceptual hashes
-                val hashMatches = hashMatcher.match(artHashHex, frameHashHex, maxDistance = 85, limit = 30)
-                if (hashMatches.isNotEmpty()) {
-                    val rowIds = hashMatches.map { it.rowId }
-                    val idMap = dbHelper.getIdentitiesForRows(rowIds)
-                    rowIds.mapNotNull { idMap[it] }
+                // Secondary candidate source: By collector number + detected set code / active batch sets
+                val targetSets = mutableSetOf<String>()
+                if (!ocr.setCode.isNullOrBlank()) targetSets.add(ocr.setCode)
+                targetSets.addAll(setBiasTally.keys)
+
+                val numCandidates = if (ocr.candidateNumbers.isNotEmpty()) {
+                    dbHelper.findCardsByCollectorNumbers(ocr.candidateNumbers, targetSets)
                 } else emptyList()
+
+                if (numCandidates.isNotEmpty()) {
+                    numCandidates
+                } else {
+                    // Fallback: If OCR missed entirely, search 112,815 perceptual hashes
+                    val hashMatches = hashMatcher.match(artHashHex, frameHashHex, maxDistance = 85, limit = 30)
+                    if (hashMatches.isNotEmpty()) {
+                        val rowIds = hashMatches.map { it.rowId }
+                        val idMap = dbHelper.getIdentitiesForRows(rowIds)
+                        rowIds.mapNotNull { idMap[it] }
+                    } else emptyList()
+                }
             }
         }
 

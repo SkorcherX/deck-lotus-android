@@ -70,28 +70,40 @@ class CardDetector {
         val yTopMin = (subH * 0.18f).toInt()
         val yTopMax = (subH * 0.45f).toInt().coerceAtLeast(yTopMin + 1)
 
-        var minGrad = Float.MAX_VALUE
+        // Find FIRST significant drop from top (white cradle to top black card border)
         var topSy = (subH * 0.25f).toInt()
-
+        var bestTopGrad = 0f
+        var inTopDrop = false
         for (sy in yTopMin until (yTopMax - gw).coerceAtLeast(yTopMin + 1)) {
             val grad = vProfile[sy + gw] - vProfile[sy]
-            if (grad < minGrad) {
-                minGrad = grad
-                topSy = sy + gw / 2
+            if (grad < -35.0f) {
+                if (!inTopDrop || grad < bestTopGrad) {
+                    bestTopGrad = grad
+                    topSy = sy + gw / 2
+                    inTopDrop = true
+                }
+            } else if (inTopDrop) {
+                break
             }
         }
 
         val yBotMin = (subH * 0.65f).toInt()
         val yBotMax = (subH * 0.85f).toInt().coerceAtLeast(yBotMin + 1)
 
-        var maxGrad = Float.MIN_VALUE
+        // Find FIRST significant rise scanning backwards from bottom (bottom black card border to white cradle)
         var botSy = (subH * 0.75f).toInt()
-
-        for (sy in yBotMin until (yBotMax - gw).coerceAtLeast(yBotMin + 1)) {
+        var bestBotGrad = 0f
+        var inBotRise = false
+        for (sy in (yBotMax - gw - 1) downTo yBotMin) {
             val grad = vProfile[sy + gw] - vProfile[sy]
-            if (grad > maxGrad) {
-                maxGrad = grad
-                botSy = sy + gw / 2
+            if (grad > 35.0f) {
+                if (!inBotRise || grad > bestBotGrad) {
+                    bestBotGrad = grad
+                    botSy = sy + gw / 2
+                    inBotRise = true
+                }
+            } else if (inBotRise) {
+                break
             }
         }
 
@@ -115,26 +127,40 @@ class CardDetector {
         val xLeftMin = (subW * 0.05f).toInt()
         val xLeftMax = (subW * 0.25f).toInt().coerceAtLeast(xLeftMin + 1)
 
-        var minHGrad = Float.MAX_VALUE
+        // Find FIRST significant drop from left to right (white cradle to left black border)
         var leftSx = (subW * 0.10f).toInt()
+        var bestLeftGrad = 0f
+        var inLeftDrop = false
         for (sx in xLeftMin until (xLeftMax - gw).coerceAtLeast(xLeftMin + 1)) {
             val grad = hProfile[sx + gw] - hProfile[sx]
-            if (grad < minHGrad) {
-                minHGrad = grad
-                leftSx = sx + gw / 2
+            if (grad < -35.0f) {
+                if (!inLeftDrop || grad < bestLeftGrad) {
+                    bestLeftGrad = grad
+                    leftSx = sx + gw / 2
+                    inLeftDrop = true
+                }
+            } else if (inLeftDrop) {
+                break
             }
         }
 
         val xRightMin = (subW * 0.75f).toInt()
         val xRightMax = (subW * 0.95f).toInt().coerceAtLeast(xRightMin + 1)
 
-        var maxHGrad = Float.MIN_VALUE
+        // Find FIRST significant rise scanning backwards from right to left (right black border to white cradle)
         var rightSx = (subW * 0.85f).toInt()
-        for (sx in xRightMin until (xRightMax - gw).coerceAtLeast(xRightMin + 1)) {
+        var bestRightGrad = 0f
+        var inRightRise = false
+        for (sx in (xRightMax - gw - 1) downTo xRightMin) {
             val grad = hProfile[sx + gw] - hProfile[sx]
-            if (grad > maxHGrad) {
-                maxHGrad = grad
-                rightSx = sx + gw / 2
+            if (grad > 35.0f) {
+                if (!inRightRise || grad > bestRightGrad) {
+                    bestRightGrad = grad
+                    rightSx = sx + gw / 2
+                    inRightRise = true
+                }
+            } else if (inRightRise) {
+                break
             }
         }
 

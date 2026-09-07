@@ -205,6 +205,28 @@ class CardDatabaseHelper(private val context: Context) {
         return cursor.readIdentities()
     }
 
+    fun findCardsByCollectorNumbers(collectorNumbers: List<String>, setCodes: Collection<String>): List<CardIdentity> {
+        val database = db ?: return emptyList()
+        val validNums = collectorNumbers.map { it.trimStart('0').ifEmpty { "0" } }.filter { it.isNotBlank() }.distinct()
+        val validSets = setCodes.map { it.trim().uppercase() }.filter { it.isNotBlank() }.distinct()
+        if (validNums.isEmpty()) return emptyList()
+
+        val numPlaceholders = validNums.joinToString(",") { "?" }
+        val args = mutableListOf<String>()
+        args.addAll(validNums)
+        args.addAll(validNums)
+
+        val query = if (validSets.isNotEmpty()) {
+            val setPlaceholders = validSets.joinToString(",") { "?" }
+            args.addAll(validSets)
+            "SELECT $IDENTITY_COLUMNS FROM printings WHERE (collector_number IN ($numPlaceholders) OR ltrim(collector_number, '0') IN ($numPlaceholders)) AND set_code IN ($setPlaceholders) COLLATE NOCASE LIMIT 50"
+        } else {
+            "SELECT $IDENTITY_COLUMNS FROM printings WHERE (collector_number IN ($numPlaceholders) OR ltrim(collector_number, '0') IN ($numPlaceholders)) LIMIT 50"
+        }
+
+        return database.rawQuery(query, args.toTypedArray()).readIdentities()
+    }
+
     fun getIdentitiesForRows(rowIds: List<Int>): Map<Int, CardIdentity> {
         val database = db ?: return emptyMap()
         if (rowIds.isEmpty()) return emptyMap()
