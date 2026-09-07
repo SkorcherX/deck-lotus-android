@@ -451,31 +451,17 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 val rawBitmap = previewView?.bitmap ?: cameraController.takePictureBitmap()
                 val capMs = (System.nanoTime() - capStart) / 1_000_000
 
-                // 2. Warp / Rectify using detected card corners
+                // 2. Warp / Rectify using detected card corners directly on captured frame
+                val detected = cardDetector.detectCard(rawBitmap)
                 val w = rawBitmap.width.toFloat()
                 val h = rawBitmap.height.toFloat()
 
-                val detected = _uiState.value.detectedCard
-                val quad = if (detected != null) {
-                    listOf(
-                        PointF(detected.topLeft.x * w, detected.topLeft.y * h),
-                        PointF(detected.topRight.x * w, detected.topRight.y * h),
-                        PointF(detected.bottomRight.x * w, detected.bottomRight.y * h),
-                        PointF(detected.bottomLeft.x * w, detected.bottomLeft.y * h)
-                    )
-                } else {
-                    val targetAspect = 63.0f / 88.0f
-                    val cardH = h * 0.58f
-                    val cardW = cardH * targetAspect
-                    val left = (srcWOrFallback(w) - cardW) / 2.0f
-                    val top = h * 0.15f
-                    listOf(
-                        PointF(left, top),
-                        PointF(left + cardW, top),
-                        PointF(left + cardW, top + cardH),
-                        PointF(left, top + cardH)
-                    )
-                }
+                val quad = listOf(
+                    PointF(detected.topLeft.x * w, detected.topLeft.y * h),
+                    PointF(detected.topRight.x * w, detected.topRight.y * h),
+                    PointF(detected.bottomRight.x * w, detected.bottomRight.y * h),
+                    PointF(detected.bottomLeft.x * w, detected.bottomLeft.y * h)
+                )
 
                 val rectified = withContext(Dispatchers.Default) {
                     CardGeometry.warpQuad(rawBitmap, quad, CardGeometry.HASH_WIDTH, CardGeometry.HASH_HEIGHT)
