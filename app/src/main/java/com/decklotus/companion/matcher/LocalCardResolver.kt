@@ -53,7 +53,7 @@ class LocalCardResolver(private val context: Context) {
                 nameCandidates
             } else {
                 // Fallback: If OCR title missed entirely, search 112,815 perceptual hashes
-                val hashMatches = hashMatcher.match(artHashHex, frameHashHex, maxDistance = 77, limit = 20)
+                val hashMatches = hashMatcher.match(artHashHex, frameHashHex, maxDistance = 85, limit = 30)
                 if (hashMatches.isNotEmpty()) {
                     val rowIds = hashMatches.map { it.rowId }
                     val idMap = dbHelper.getIdentitiesForRows(rowIds)
@@ -89,16 +89,16 @@ class LocalCardResolver(private val context: Context) {
                     artDist <= 38 -> score += 100 // Exact illustration match (< 15% bit error)
                     artDist <= 56 -> score += 75  // Strong illustration match (< 22%)
                     artDist <= 77 -> score += 40  // Valid illustration match (< 30%)
-                    artDist >= 85 -> score -= 60  // Major penalty for different illustration (e.g. anime/showcase art vs regular)
+                    artDist >= 90 -> score -= 60  // Major penalty for different illustration (e.g. anime/showcase art vs regular)
                 }
 
                 // B. Set Code Match
                 val hasSetMatch: Boolean
                 if (ocrSetExplicit != null && candSet == ocrSetExplicit) {
-                    score += 80
+                    score += 100
                     hasSetMatch = true
                 } else if (allOcrText.contains(Regex("""\b$candSet\b"""))) {
-                    score += 50
+                    score += 60
                     hasSetMatch = true
                 } else {
                     hasSetMatch = false
@@ -121,21 +121,21 @@ class LocalCardResolver(private val context: Context) {
                     if (typoMatch) {
                         score += 35
                     } else if (candidateNumbers.isNotEmpty()) {
-                        score -= 30 // Mismatch against clearly detected numbers
+                        score -= 25 // Mismatch against clearly detected numbers
                     }
                     hasNumMatch = false
                 }
 
                 // D. Standard Pack Version Stability Preference (+10 only as fallback when no OCR numbers detected)
                 val intCollector = candNum.filter { it.isDigit() }.toIntOrNull() ?: 999
-                if (candidateNumbers.isEmpty() && intCollector in 1..300 && !candRawNum.endsWith("p", ignoreCase = true) && !candRawNum.endsWith("s", ignoreCase = true)) {
+                if (candidateNumbers.isEmpty() && intCollector in 1..400 && !candRawNum.endsWith("p", ignoreCase = true) && !candRawNum.endsWith("s", ignoreCase = true)) {
                     score += 10
                 }
 
-                // E. Session Set Bias tie-breaker
+                // E. Session Set Bias tie-breaker (Strong bonus for sets in current scanning batch)
                 val biasCount = setBiasTally[candSet] ?: 0
                 if (biasCount > 0) {
-                    score += kotlin.math.min(20, biasCount * 5)
+                    score += kotlin.math.min(40, biasCount * 10)
                 }
 
                 if (score > highestScore || (score == highestScore && intCollector < (bestPrinting.collectorNumber.filter { it.isDigit() }.toIntOrNull() ?: 999))) {

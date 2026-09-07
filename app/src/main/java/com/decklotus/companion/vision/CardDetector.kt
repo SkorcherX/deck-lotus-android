@@ -25,33 +25,118 @@ class CardDetector {
      * Compute clean card quad with exact MTG 63:88 aspect ratio inside the frame.
      */
     fun detectCard(bitmap: Bitmap): DetectedCardQuad {
-        val srcW = bitmap.width.toFloat()
-        val srcH = bitmap.height.toFloat()
+        val srcW = bitmap.width
+        val srcH = bitmap.height
 
-        val targetAspect = 63.0f / 88.0f
-        var cardH = srcH * 0.70f
-        var cardW = cardH * targetAspect
+        val step = 4
+        val subW = srcW / step
+        val subH = srcH / step
 
-        if (cardW > srcW * 0.85f) {
-            cardW = srcW * 0.85f
-            cardH = cardW / targetAspect
+        val rowCounts = IntArray(subH)
+        val colCounts = IntArray(subW)
+
+        val pixels = IntArray(srcW * srcH)
+        bitmap.getPixels(pixels, 0, srcW, 0, 0, srcW, srcH)
+
+        for (sy in 0 until subH) {
+            val y = sy * step
+            val rowOffset = y * srcW
+            for (sx in 0 until subW) {
+                val x = sx * step
+                val c = pixels[rowOffset + x]
+                val r = (c shr 16) and 0xFF
+                val g = (c shr 8) and 0xFF
+                val b = c and 0xFF
+                // Fast luma approximation
+                val luma = (r * 77 + g * 150 + b * 29) shr 8
+                if (luma < 140) {
+                    rowCounts[sy]++
+                    colCounts[sx]++
+                }
+            }
         }
 
-        // Centered cradle placement (slightly biased towards center-top where card rests)
-        val left = (srcW - cardW) / 2.0f
-        val top = (srcH - cardH) * 0.40f
+        val minCardCols = (subW * 0.30f).toInt()
+        val minCardRows = (subH * 0.20f).toInt()
 
-        val normLeft = left / srcW
-        val normRight = (left + cardW) / srcW
-        val normTop = top / srcH
-        val normBottom = (top + cardH) / srcH
+        var firstRow = -1
+        var lastRow = -1
+        for (sy in 0 until subH) {
+            if (rowCounts[sy] >= minCardCols) {
+                if (firstRow == -1) firstRow = sy
+                lastRow = sy
+            }
+        }
+
+        var firstCol = -1
+        var lastCol = -1
+        for (sx in 0 until subW) {
+            if (colCounts[sx] >= minCardRows) {
+                if (firstCol == -1) firstCol = sx
+                lastCol = sx
+            }
+        }
+
+        val targetAspect = 63.0f / 88.0f
+        val normLeft: Float
+        val normRight: Float
+        val normTop: Float
+        val normBottom: Float
+        val confidence: Float
+
+        if (firstRow != -1 && lastRow != -1 && firstCol != -1 && lastCol != -1 && (lastRow - firstRow) >= minCardRows) {
+            val yMin = (firstRow * step).toFloat()
+            val yMax = (lastRow * step).toFloat()
+            val xMin = (firstCol * step).toFloat()
+            val xMax = (lastCol * step).toFloat()
+
+            val detH = (yMax - yMin).coerceAtLeast(100f)
+            val centerX = (xMin + xMax) / 2.0f
+            val centerY = (yMin + yMax) / 2.0f
+
+            var cardH = detH
+            var cardW = cardH * targetAspect
+
+            val maxAllowedW = srcW * 0.84f
+            if (cardW > maxAllowedW) {
+                cardW = maxAllowedW
+                cardH = cardW / targetAspect
+            }
+
+            val left = centerX - cardW / 2.0f
+            val right = centerX + cardW / 2.0f
+            val top = centerY - cardH / 2.0f
+            val bottom = centerY + cardH / 2.0f
+
+            normLeft = (left / srcW).coerceIn(0.0f, 1.0f)
+            normRight = (right / srcW).coerceIn(0.0f, 1.0f)
+            normTop = (top / srcH).coerceIn(0.0f, 1.0f)
+            normBottom = (bottom / srcH).coerceIn(0.0f, 1.0f)
+            confidence = 0.98f
+        } else {
+            // Cradle placement fallback
+            var cardH = srcH * 0.44f
+            var cardW = cardH * targetAspect
+            if (cardW > srcW * 0.82f) {
+                cardW = srcW * 0.82f
+                cardH = cardW / targetAspect
+            }
+            val left = (srcW - cardW) / 2.0f
+            val top = srcH * 0.26f
+
+            normLeft = left / srcW
+            normRight = (left + cardW) / srcW
+            normTop = top / srcH
+            normBottom = (top + cardH) / srcH
+            confidence = 0.80f
+        }
 
         val cardQuad = DetectedCardQuad(
             topLeft = PointF(normLeft, normTop),
             topRight = PointF(normRight, normTop),
             bottomRight = PointF(normRight, normBottom),
             bottomLeft = PointF(normLeft, normBottom),
-            confidence = 0.95f
+            confidence = confidence
         )
 
         return calculateCollectorBox(cardQuad)

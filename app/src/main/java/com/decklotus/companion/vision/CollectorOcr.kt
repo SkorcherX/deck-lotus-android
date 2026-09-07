@@ -92,14 +92,24 @@ object CollectorOcr {
             keywordExclusions.none { upper.startsWith(it) }
         }?.text
 
-        val cleanName = nameCandidate
+        val rawClean = nameCandidate
             ?.replace("’", "'")
             ?.replace("`", "'")
             ?.replace("‘", "'")
             ?.replace(Regex("""[0-9/\{\}★☆]"""), "")
             ?.trim()
-            ?.trimEnd('.', '-', ',', ':')
+            ?.trim { !it.isLetterOrDigit() && it != '\'' }
             ?.ifBlank { null }
+
+        val cleanName = when {
+            rawClean == null -> null
+            rawClean.equals("Jsland", ignoreCase = true) -> "Island"
+            rawClean.startsWith("Basic Land", ignoreCase = true) || rawClean.startsWith("Basic Larnd", ignoreCase = true) -> {
+                val sub = rawClean.substringAfter("Land", "").ifBlank { rawClean.substringAfter("Larnd", "") }.trim { !it.isLetterOrDigit() }
+                sub.ifBlank { rawClean }
+            }
+            else -> rawClean
+        }
 
         // 2. Bottom Zone (Bottom 10% of card): Collector Block only (Y >= 0.90)
         val collectorLinesWithBoxes = allLinesWithBoxes.filter { item ->
@@ -111,7 +121,7 @@ object CollectorOcr {
         val effectiveCollectorLines = collectorLines.ifEmpty { 
             allLinesWithBoxes.filter { (it.box?.top ?: 0) >= cardHeight * 0.85f }.map { it.text } 
         }
-        val parsedCollector = parseRawCollectorLines(effectiveCollectorLines)
+        val parsedCollector = parseRawCollectorLines(allLinesWithBoxes.map { it.text })
 
         val hasValidData = cleanName != null || parsedCollector.collectorNumber != null || parsedCollector.setCode != null
         val confidence = when {
@@ -158,9 +168,9 @@ object CollectorOcr {
         )
 
         // Pattern 1A: Set • Lang with separators (e.g. "SOA • EN", "FDN · EN", "WOE - EN", "MH3/EN", "BLB | EN", "OTJ I EN", "SOS • EN")
-        val setLangRegex = Regex("""\b([A-Za-z0-9]{3,4})\s*[\u2022\u2219\u00B7\u25CF\u25AA\.\-\/\\\|I\s]\s*([A-Za-z]{2,3})\b""", RegexOption.IGNORE_CASE)
+        val setLangRegex = Regex("""\b([A-Za-z0-9]{3,4})\s*[\u2022\u2219\u00B7\u25CF\u25AA\.\-\/\\\|I\s\*]\s*([A-Za-z]{2,3})\b""", RegexOption.IGNORE_CASE)
 
-        // Pattern 1B: Merged Set + Lang without separator (e.g. "SOAEN", "SOSEN", "ECLEN", "SOAENMATTHEW", "SOSENMARIE")
+        // Pattern 1B: Merged Set + Lang without separator (e.g. "SOAEN", "SOSEN", "ECLEN", "SOAENMATTHEW", "SOSENMARIE", "INREN")
         val mergedSetLangRegex = Regex("""\b([A-Za-z0-9]{3,4})(EN|JP|JA|DE|FR|IT|ES|PT|RU|KO|ZHS|ZHT|CS|CT)\b""", RegexOption.IGNORE_CASE)
         val mergedPrefixRegex = Regex("""\b([A-Za-z0-9]{3,4})(EN|JP|JA|DE|FR|IT|ES|PT|RU|KO|ZHS|ZHT|CS|CT)[A-Za-z]*\b""", RegexOption.IGNORE_CASE)
 
@@ -172,6 +182,24 @@ object CollectorOcr {
 
         // Pattern 2C: Padded 3/4-digit numbers including OCR letter 'O'/'o' (e.g. "0052", "O078", "O339", "O347", "O324", "0018")
         val paddedNumRegex = Regex("""\b([0-9Oo]{3,4}[A-Za-z]?)\b""")
+
+        // Pattern 2D: Retro frame copyright line trailing collector number (e.g. "Coast 291", "Coast 453", "Coast 0253")
+        val retroCopyrightRegex = Regex("""(?:Coast|Wizards|©|\bTM\b)\s+(?:19\d\d|20\d\d)?\s*([0-9Oo]{1,4}[A-Za-z]?)\s*$""", RegexOption.IGNORE_CASE)
+
+        // Check retro frame numbers first across all lines
+        for (line in lines) {
+            val clean = line.trim()
+            val m = retroCopyrightRegex.find(clean)
+            if (m != null) {
+                val rawNum = m.groupValues[1].replace('O', '0').replace('o', '0')
+                val intVal = rawNum.filter { it.isDigit() }.toIntOrNull() ?: -1
+                if (intVal in 1..999 && intVal !in 1990..2030) {
+                    val stripped = rawNum.trimStart('0').ifEmpty { "0" }
+                    if (rawNum !in candidateNumbers) candidateNumbers.add(rawNum)
+                    if (stripped !in candidateNumbers) candidateNumbers.add(stripped)
+                }
+            }
+        }
 
         // Filter out copyright lines & power/toughness lines
         val filteredLines = lines.filterNot { line ->
