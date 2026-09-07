@@ -27,6 +27,7 @@ class SettingsRepository(private val context: Context) {
         val AUTO_EXPOSURE = booleanPreferencesKey("auto_exposure")
         val TORCH_ENABLED = booleanPreferencesKey("torch_enabled")
         val SHOW_DEBUG_INFO = booleanPreferencesKey("show_debug_info")
+        val SAVE_DEBUG_CAPTURES = booleanPreferencesKey("save_debug_captures")
         val EXPOSURE_NS = longPreferencesKey("exposure_ns")
         val ISO = intPreferencesKey("iso")
         val FOCUS_DIST = floatPreferencesKey("focus_dist")
@@ -73,6 +74,7 @@ class SettingsRepository(private val context: Context) {
             autoExposure = prefs[Keys.AUTO_EXPOSURE] ?: true,
             torchEnabled = prefs[Keys.TORCH_ENABLED] ?: false,
             showDebugInfo = prefs[Keys.SHOW_DEBUG_INFO] ?: false,
+            saveDebugCaptures = prefs[Keys.SAVE_DEBUG_CAPTURES] ?: false,
             exposureTimeNs = prefs[Keys.EXPOSURE_NS] ?: 2_000_000L,
             isoSensitivity = prefs[Keys.ISO] ?: 400,
             focusDistanceDiopters = prefs[Keys.FOCUS_DIST] ?: 6.5f,
@@ -118,6 +120,7 @@ class SettingsRepository(private val context: Context) {
                 autoExposure = prefs[Keys.AUTO_EXPOSURE] ?: true,
                 torchEnabled = prefs[Keys.TORCH_ENABLED] ?: false,
                 showDebugInfo = prefs[Keys.SHOW_DEBUG_INFO] ?: false,
+                saveDebugCaptures = prefs[Keys.SAVE_DEBUG_CAPTURES] ?: false,
                 exposureTimeNs = prefs[Keys.EXPOSURE_NS] ?: 2_000_000L,
                 isoSensitivity = prefs[Keys.ISO] ?: 400,
                 focusDistanceDiopters = prefs[Keys.FOCUS_DIST] ?: 6.5f,
@@ -136,6 +139,7 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.AUTO_EXPOSURE] = updated.autoExposure
             prefs[Keys.TORCH_ENABLED] = updated.torchEnabled
             prefs[Keys.SHOW_DEBUG_INFO] = updated.showDebugInfo
+            prefs[Keys.SAVE_DEBUG_CAPTURES] = updated.saveDebugCaptures
             prefs[Keys.EXPOSURE_NS] = updated.exposureTimeNs
             prefs[Keys.ISO] = updated.isoSensitivity
             prefs[Keys.FOCUS_DIST] = updated.focusDistanceDiopters

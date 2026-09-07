@@ -23,6 +23,7 @@ data class AppSettings(
     val autoExposure: Boolean = true, // Default to AE for room lighting
     val torchEnabled: Boolean = false,
     val showDebugInfo: Boolean = false, // Hide technical debug info/timings/HUD by default
+    val saveDebugCaptures: Boolean = false, // Save raw frames, crops, and OCR logs to storage for debugging
     val exposureTimeNs: Long = 2_000_000L, // 1/500s when in manual mode
     val isoSensitivity: Int = 400,
     val focusDistanceDiopters: Float = 6.5f, // ~15cm fixed cradle distance

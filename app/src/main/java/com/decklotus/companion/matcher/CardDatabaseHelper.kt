@@ -108,14 +108,21 @@ class CardDatabaseHelper(private val context: Context) {
         db = SQLiteDatabase.openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
     }
 
+    private fun normalizeName(raw: String): String =
+        raw.replace("’", "'")
+            .replace("`", "'")
+            .replace("‘", "'")
+            .replace(Regex("""[0-9/\{\}★☆]"""), "")
+            .trim()
+
     fun findBestMatchingCardFromLines(lines: List<String>): List<CardIdentity> {
         val database = db ?: return emptyList()
 
         for (rawLine in lines) {
-            val line = rawLine.replace(Regex("""[0-9/\{\}★☆]"""), "").trim()
+            val line = normalizeName(rawLine)
             if (line.length < 3) continue
 
-            // 1. Exact match (case-insensitive)
+            // 1. Exact match or DFC front-face match
             val exactList = queryByNameExact(line)
             if (exactList.isNotEmpty()) return exactList
 
@@ -130,16 +137,16 @@ class CardDatabaseHelper(private val context: Context) {
     }
 
     fun findCardsByName(name: String, setCodeHint: String? = null): List<CardIdentity> {
-        val clean = name.replace(Regex("""[0-9/\{\}★☆]"""), "").trim()
+        val clean = normalizeName(name)
         if (clean.length < 2) return emptyList()
 
-        // 1. If set code hint is known, query exact name in that specific set first
+        // 1. If set code hint is known, query exact name or DFC in that specific set first
         if (!setCodeHint.isNullOrBlank()) {
             val setSpecific = queryByNameAndSet(clean, setCodeHint)
             if (setSpecific.isNotEmpty()) return setSpecific
         }
 
-        // 2. Exact name match across all sets (high limit to include all basic lands & reprints)
+        // 2. Exact name match or DFC across all sets (high limit to include all basic lands & reprints)
         val exact = queryByNameExact(clean)
         if (exact.isNotEmpty()) return exact
 
@@ -165,8 +172,8 @@ class CardDatabaseHelper(private val context: Context) {
     private fun queryByNameAndSet(name: String, setCode: String): List<CardIdentity> {
         val database = db ?: return emptyList()
         val cursor = database.rawQuery(
-            "SELECT $IDENTITY_COLUMNS FROM printings WHERE name = ? COLLATE NOCASE AND set_code = ? COLLATE NOCASE LIMIT 100",
-            arrayOf(name, setCode)
+            "SELECT $IDENTITY_COLUMNS FROM printings WHERE (name = ? COLLATE NOCASE OR name LIKE ? COLLATE NOCASE) AND set_code = ? COLLATE NOCASE LIMIT 100",
+            arrayOf(name, "$name // %", setCode)
         )
         return cursor.readIdentities()
     }
@@ -174,8 +181,8 @@ class CardDatabaseHelper(private val context: Context) {
     private fun queryByNameExact(clean: String): List<CardIdentity> {
         val database = db ?: return emptyList()
         val cursor = database.rawQuery(
-            "SELECT $IDENTITY_COLUMNS FROM printings WHERE name = ? COLLATE NOCASE LIMIT 250",
-            arrayOf(clean)
+            "SELECT $IDENTITY_COLUMNS FROM printings WHERE name = ? COLLATE NOCASE OR name LIKE ? COLLATE NOCASE LIMIT 250",
+            arrayOf(clean, "$clean // %")
         )
         return cursor.readIdentities()
     }

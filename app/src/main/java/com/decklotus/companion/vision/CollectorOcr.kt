@@ -92,7 +92,14 @@ object CollectorOcr {
             keywordExclusions.none { upper.startsWith(it) }
         }?.text
 
-        val cleanName = nameCandidate?.replace(Regex("""[0-9/\{\}]"""), "")?.trim()?.ifBlank { null }
+        val cleanName = nameCandidate
+            ?.replace("’", "'")
+            ?.replace("`", "'")
+            ?.replace("‘", "'")
+            ?.replace(Regex("""[0-9/\{\}★☆]"""), "")
+            ?.trim()
+            ?.trimEnd('.', '-', ',', ':')
+            ?.ifBlank { null }
 
         // 2. Bottom Zone (Bottom 10% of card): Collector Block only (Y >= 0.90)
         val collectorLinesWithBoxes = allLinesWithBoxes.filter { item ->

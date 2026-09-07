@@ -141,6 +141,26 @@ fun SettingsScreen(
                             }
                         )
                     }
+
+                    HorizontalDivider(color = SurfaceBorder)
+
+                    // Save Debug Captures Switch
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Save Debug Scan Captures", fontWeight = FontWeight.Medium)
+                            Text("Saves raw camera frames, crops, and OCR logs to storage for debugging", fontSize = 12.sp, color = TextSecondary)
+                        }
+                        Switch(
+                            checked = settings.saveDebugCaptures,
+                            onCheckedChange = { checked ->
+                                viewModel.updateSettings { it.copy(saveDebugCaptures = checked) }
+                            }
+                        )
+                    }
                 }
             }
 

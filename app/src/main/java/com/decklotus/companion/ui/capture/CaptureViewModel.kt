@@ -26,8 +26,14 @@ import com.decklotus.companion.vision.CardSettleDetector
 import com.decklotus.companion.vision.CollectorOcr
 import com.decklotus.companion.vision.DetectedCardQuad
 import com.decklotus.companion.vision.SettleState
+import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 
 enum class PriceBand(val minPrice: Double, val colorArgb: Int, val bandName: String) {
@@ -506,6 +512,12 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     totalMs = totalMs
                 )
 
+                if (settings.saveDebugCaptures) {
+                    withContext(Dispatchers.IO) {
+                        saveDebugCapture(rawBitmap, rectified, fullOcr, hashes, resp, timings)
+                    }
+                }
+
                 if (resp.printing != null && resp.tier != "unresolved") {
                     // Null all the way through when nothing priced this
                     // printing, so the band reads UNKNOWN rather than pulsing
@@ -563,6 +575,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 }
 
             } catch (e: Exception) {
+                Log.e("DeckLotusDebug", "Capture failed: ${e.message}", e)
                 settleDetector.reset()
                 triggerHaptic(isSuccess = false)
                 if (settings.soundFeedbackEnabled) soundFeedback.playErrorTone()
@@ -579,6 +592,76 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
             }
+        }
+    }
+
+    private fun saveDebugCapture(
+        rawBitmap: Bitmap,
+        rectifiedBitmap: Bitmap,
+        ocr: CollectorOcr.ParsedCardOcr,
+        hashes: CardHasher.CardHashes,
+        resp: IngestResponse,
+        timings: CaptureTimings
+    ) {
+        try {
+            val dir = File(getApplication<Application>().getExternalFilesDir(null), "debug_captures")
+            if (!dir.exists()) dir.mkdirs()
+
+            val ts = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+
+            // 1. Save raw unwarped image
+            val rawFile = File(dir, "raw_${ts}.png")
+            FileOutputStream(rawFile).use { out ->
+                rawBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+
+            // 2. Save rectified warped crop
+            val rectFile = File(dir, "rectified_${ts}.png")
+            FileOutputStream(rectFile).use { out ->
+                rectifiedBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+
+            // 3. Save diagnostic dump file
+            val logFile = File(dir, "debug_${ts}.txt")
+            val content = buildString {
+                appendLine("Timestamp: $ts")
+                appendLine("Raw Frame: ${rawBitmap.width}x${rawBitmap.height}")
+                appendLine("Rectified Crop: ${rectifiedBitmap.width}x${rectifiedBitmap.height}")
+                appendLine()
+                appendLine("--- OCR PARSED ---")
+                appendLine("Title Name: ${ocr.name}")
+                appendLine("Set Code: ${ocr.setCode}")
+                appendLine("Collector Number: ${ocr.collectorNumber}")
+                appendLine("Candidate Numbers: ${ocr.candidateNumbers}")
+                appendLine("Language: ${ocr.language}")
+                appendLine("Is Foil: ${ocr.isFoil}")
+                appendLine("Confidence: ${ocr.confidence}")
+                appendLine("Raw OCR Lines (${ocr.rawLines.size}):")
+                ocr.rawLines.forEach { appendLine("  - \"$it\"") }
+                appendLine()
+                appendLine("--- PERCEPTUAL HASHES ---")
+                appendLine("Art Hash: ${hashes.artHash}")
+                appendLine("Frame Hash: ${hashes.frameHash}")
+                appendLine()
+                appendLine("--- RESOLUTION RESULT ---")
+                appendLine("Tier: ${resp.tier}")
+                appendLine("Matched: ${resp.printing?.name} [${resp.printing?.setCode} #${resp.printing?.collector}] (ID=${resp.printing?.printingId})")
+                appendLine("Market Price: ${resp.marketPriceUsd} (${resp.priceType})")
+                appendLine("Hash Distance Bits: ${resp.hashDistanceBits}")
+                appendLine("Error: ${resp.error}")
+                appendLine()
+                appendLine("--- TIMINGS ---")
+                appendLine("Capture: ${timings.captureMs}ms")
+                appendLine("Hash: ${timings.hashMs}ms")
+                appendLine("OCR: ${timings.ocrMs}ms")
+                appendLine("Resolve: ${timings.networkMs}ms")
+                appendLine("Total: ${timings.totalMs}ms")
+            }
+            logFile.writeText(content)
+
+            Log.i("DeckLotusDebug", "Saved debug capture to ${dir.absolutePath} ($ts):\n$content")
+        } catch (e: Exception) {
+            Log.e("DeckLotusDebug", "Failed to save debug capture: ${e.message}", e)
         }
     }
 
