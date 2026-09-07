@@ -129,14 +129,14 @@ class LocalCardResolver(private val context: Context) {
                     score += 70 // Found in OCR text
                     hasNumMatch = true
                 } else {
-                    // Check slight OCR typo on number (e.g. 018 vs 148, edit distance 1)
+                    // Check slight OCR typo on number (e.g. 018 vs 148, edit distance 1, or prefix 45 vs 453)
                     val typoMatch = candidateNumbers.any { isNumTypo(candNum, it) }
                     if (typoMatch) {
-                        score += 35
+                        score += 50
                     } else if (candidateNumbers.isNotEmpty()) {
                         score -= 25 // Mismatch against clearly detected numbers
                     }
-                    hasNumMatch = false
+                    hasNumMatch = typoMatch
                 }
 
                 // D. Standard Pack Version Stability Preference (+10 only as fallback when no OCR numbers detected)
@@ -148,7 +148,7 @@ class LocalCardResolver(private val context: Context) {
                 // E. Session Set Bias tie-breaker (Strong bonus for sets in current scanning batch)
                 val biasCount = setBiasTally[candSet] ?: 0
                 if (biasCount > 0) {
-                    score += kotlin.math.min(40, biasCount * 10)
+                    score += kotlin.math.min(60, biasCount * 15)
                 }
 
                 if (score > highestScore || (score == highestScore && intCollector < (bestPrinting.collectorNumber.filter { it.isDigit() }.toIntOrNull() ?: 999))) {

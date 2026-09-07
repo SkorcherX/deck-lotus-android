@@ -67,7 +67,7 @@ object CollectorOcr {
         val maxBottom = allLinesWithBoxes.mapNotNull { it.box?.bottom }.maxOrNull() ?: 680
         val cardHeight = if (maxBottom > 100) maxBottom else 680
 
-        // 1. Top Zone (Top 20% of card): Card Title only
+        // 1. Top Zone (Top 22% of card): Card Title
         val titleLinesWithBoxes = allLinesWithBoxes.filter { item ->
             val top = item.box?.top ?: 0
             top < cardHeight * 0.22f
@@ -79,18 +79,27 @@ object CollectorOcr {
             "DEATHTOUCH", "FLASH", "FIRST STRIKE", "WARD", "HEXPROOF", "DEFENDER", "REACH"
         )
 
-        val nameCandidate = titleLinesWithBoxes.map { it.text }.firstOrNull { line ->
-            val upper = line.uppercase().trim()
-            line.length >= 3 &&
-            !line.startsWith("{") &&
-            !line.contains("•") &&
-            !line.contains("/") &&
-            !line.all { it.isDigit() } &&
+        // Find lines in the title bar (top 16%)
+        val validTitleLines = titleLinesWithBoxes.filter { item ->
+            val upper = item.text.uppercase().trim()
+            val top = item.box?.top ?: 0
+            top < cardHeight * 0.16f &&
+            item.text.length >= 2 &&
+            !item.text.startsWith("{") &&
+            !item.text.contains("•") &&
+            !item.text.contains("/") &&
+            !item.text.all { it.isDigit() || it.isWhitespace() || it == '*' } &&
             keywordExclusions.none { upper.startsWith(it) }
-        } ?: allLinesWithBoxes.firstOrNull { line ->
-            val upper = line.text.uppercase().trim()
-            keywordExclusions.none { upper.startsWith(it) }
-        }?.text
+        }.sortedBy { it.box?.left ?: 0 }
+
+        val nameCandidate = if (validTitleLines.isNotEmpty()) {
+            validTitleLines.joinToString(" ") { it.text }
+        } else {
+            allLinesWithBoxes.firstOrNull { line ->
+                val upper = line.text.uppercase().trim()
+                keywordExclusions.none { upper.startsWith(it) }
+            }?.text
+        }
 
         val rawClean = nameCandidate
             ?.replace("’", "'")
@@ -183,19 +192,28 @@ object CollectorOcr {
         // Pattern 2C: Padded 3/4-digit numbers including OCR letter 'O'/'o' (e.g. "0052", "O078", "O339", "O347", "O324", "0018")
         val paddedNumRegex = Regex("""\b([0-9Oo]{3,4}[A-Za-z]?)\b""")
 
-        // Pattern 2D: Retro frame copyright line trailing collector number (e.g. "Coast 291", "Coast 453", "Coast 0253")
-        val retroCopyrightRegex = Regex("""(?:Coast|Wizards|©|\bTM\b)\s+(?:19\d\d|20\d\d)?\s*([0-9Oo]{1,4}[A-Za-z]?)\s*$""", RegexOption.IGNORE_CASE)
+        // Pattern 2D: Retro frame copyright line trailing collector number (e.g. "Coast 291", "Coast 453", "Coast 0253", "Ct 45)", "Sws de Ct 45)")
+        val retroCopyrightRegex = Regex("""(?:Coast|Wizards|©|\bTM\b|\bCt\b|\bSws\b)\s+(?:19\d\d|20\d\d)?\s*([0-9Oo\)\(\]\[\}\{A-Za-z]{1,5})\s*$""", RegexOption.IGNORE_CASE)
 
         // Check retro frame numbers first across all lines
         for (line in lines) {
             val clean = line.trim()
             val m = retroCopyrightRegex.find(clean)
             if (m != null) {
-                val rawNum = m.groupValues[1].replace('O', '0').replace('o', '0')
-                val intVal = rawNum.filter { it.isDigit() }.toIntOrNull() ?: -1
+                val rawGroup = m.groupValues[1]
+                val normalizedNum = rawGroup
+                    .replace(')', '3')
+                    .replace(']', '1')
+                    .replace('}', '3')
+                    .replace('>', '1')
+                    .replace('O', '0')
+                    .replace('o', '0')
+                    .replace('S', '5')
+                    .replace('s', '5')
+                val intVal = normalizedNum.filter { it.isDigit() }.toIntOrNull() ?: -1
                 if (intVal in 1..999 && intVal !in 1990..2030) {
-                    val stripped = rawNum.trimStart('0').ifEmpty { "0" }
-                    if (rawNum !in candidateNumbers) candidateNumbers.add(rawNum)
+                    val stripped = normalizedNum.trimStart('0').ifEmpty { "0" }
+                    if (normalizedNum !in candidateNumbers) candidateNumbers.add(normalizedNum)
                     if (stripped !in candidateNumbers) candidateNumbers.add(stripped)
                 }
             }
