@@ -358,4 +358,251 @@ class DeckLotusApiClient(
             isCloudflareAuthRequired = isCloudflareAuthRequired
         )
     }
+
+    /**
+     * Fetch the user's decks from GET /api/decks.
+     */
+    suspend fun fetchUserDecks(
+        baseUrl: String,
+        token: String?
+    ): Result<List<DeckSummary>> = withContext(Dispatchers.IO) {
+        val cleanBase = baseUrl.trim().trimEnd('/')
+        if (cleanBase.isBlank() || !cleanBase.startsWith("http")) {
+            return@withContext Result.failure(IllegalArgumentException("Invalid server URL"))
+        }
+
+        val url = "$cleanBase/api/decks"
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .authenticate(token)
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                val code = response.code
+                val location = response.header("Location").orEmpty()
+                val contentType = response.header("Content-Type").orEmpty().lowercase()
+                val cfRay = response.header("CF-Ray")
+                val wwwAuth = response.header("Www-Authenticate")
+                val bodyText = response.body?.string().orEmpty()
+
+                if (isCloudflareChallenge(code, location, contentType, cfRay, wwwAuth, bodyText)) {
+                    return@withContext Result.failure(IllegalStateException("Cloudflare Access session required. Log in via CF Portal."))
+                }
+
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(IllegalStateException("HTTP $code: ${bodyText.take(200)}"))
+                }
+
+                val parsed = json.decodeFromString(DeckListResponse.serializer(), bodyText)
+                Result.success(parsed.decks)
+            }
+        } catch (e: Exception) {
+            val msg = e.localizedMessage ?: e.javaClass.simpleName
+            Log.e("DeckLotusApiClient", "GET $url failed: $msg")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Create a new deck via POST /api/decks.
+     */
+    suspend fun createDeck(
+        baseUrl: String,
+        token: String?,
+        name: String,
+        format: String = "commander",
+        description: String? = null,
+        status: String = "building"
+    ): Result<DeckSummary> = withContext(Dispatchers.IO) {
+        val cleanBase = baseUrl.trim().trimEnd('/')
+        if (cleanBase.isBlank() || !cleanBase.startsWith("http")) {
+            return@withContext Result.failure(IllegalArgumentException("Invalid server URL"))
+        }
+
+        val url = "$cleanBase/api/decks"
+        val payload = CreateDeckRequest(
+            name = name.trim(),
+            format = format,
+            description = description?.trim()?.ifEmpty { null },
+            status = status
+        )
+        val bodyJson = json.encodeToString(CreateDeckRequest.serializer(), payload)
+        val requestBody = bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType())
+
+        val request = Request.Builder()
+            .url(url)
+            .post(requestBody)
+            .authenticate(token)
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                val code = response.code
+                val location = response.header("Location").orEmpty()
+                val contentType = response.header("Content-Type").orEmpty().lowercase()
+                val cfRay = response.header("CF-Ray")
+                val wwwAuth = response.header("Www-Authenticate")
+                val bodyText = response.body?.string().orEmpty()
+
+                if (isCloudflareChallenge(code, location, contentType, cfRay, wwwAuth, bodyText)) {
+                    return@withContext Result.failure(IllegalStateException("Cloudflare Access session required. Log in via CF Portal."))
+                }
+
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(IllegalStateException("HTTP $code: ${bodyText.take(200)}"))
+                }
+
+                val parsed = json.decodeFromString(CreateDeckResponse.serializer(), bodyText)
+                Result.success(parsed.deck)
+            }
+        } catch (e: Exception) {
+            val msg = e.localizedMessage ?: e.javaClass.simpleName
+            Log.e("DeckLotusApiClient", "POST $url failed: $msg")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Check which cards are not in the user's collection via POST /api/scan/shortfall.
+     */
+    suspend fun checkShortfall(
+        baseUrl: String,
+        token: String?,
+        items: List<ScanShortfallItem>
+    ): Result<List<OwnershipShortfall>> = withContext(Dispatchers.IO) {
+        val cleanBase = baseUrl.trim().trimEnd('/')
+        if (cleanBase.isBlank() || !cleanBase.startsWith("http")) {
+            return@withContext Result.failure(IllegalArgumentException("Invalid server URL"))
+        }
+        if (items.isEmpty()) {
+            return@withContext Result.success(emptyList())
+        }
+
+        val url = "$cleanBase/api/scan/shortfall"
+        val payload = ScanShortfallRequest(items = items)
+        val bodyJson = json.encodeToString(ScanShortfallRequest.serializer(), payload)
+        val requestBody = bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType())
+
+        val request = Request.Builder()
+            .url(url)
+            .post(requestBody)
+            .authenticate(token)
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                val code = response.code
+                val location = response.header("Location").orEmpty()
+                val contentType = response.header("Content-Type").orEmpty().lowercase()
+                val cfRay = response.header("CF-Ray")
+                val wwwAuth = response.header("Www-Authenticate")
+                val bodyText = response.body?.string().orEmpty()
+
+                if (isCloudflareChallenge(code, location, contentType, cfRay, wwwAuth, bodyText)) {
+                    return@withContext Result.failure(IllegalStateException("Cloudflare Access session required. Log in via CF Portal."))
+                }
+
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(IllegalStateException("HTTP $code: ${bodyText.take(200)}"))
+                }
+
+                val parsed = json.decodeFromString(ScanShortfallResponse.serializer(), bodyText)
+                Result.success(parsed.shortfalls)
+            }
+        } catch (e: Exception) {
+            val msg = e.localizedMessage ?: e.javaClass.simpleName
+            Log.e("DeckLotusApiClient", "POST $url failed: $msg")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Commit a scanned session directly to a deck via POST /api/scan/commit.
+     */
+    suspend fun commitBatchToDeck(
+        baseUrl: String,
+        token: String?,
+        deckId: Int,
+        items: List<ScanCommitItem>,
+        alsoAddToCollection: Boolean = false
+    ): CommitDeckOutcome = withContext(Dispatchers.IO) {
+        val cleanBase = baseUrl.trim().trimEnd('/')
+        if (cleanBase.isBlank() || !cleanBase.startsWith("http")) {
+            return@withContext CommitDeckOutcome(
+                committedCards = 0,
+                totalCopies = 0,
+                deckId = deckId,
+                batchId = null,
+                transportError = "Invalid server URL"
+            )
+        }
+
+        val url = "$cleanBase/api/scan/commit"
+        val payload = ScanCommitRequest(
+            destination = "deck",
+            deckId = deckId,
+            items = items,
+            alsoAddToCollection = alsoAddToCollection
+        )
+        val bodyJson = json.encodeToString(ScanCommitRequest.serializer(), payload)
+        val requestBody = bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType())
+
+        val request = Request.Builder()
+            .url(url)
+            .post(requestBody)
+            .authenticate(token)
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                val code = response.code
+                val location = response.header("Location").orEmpty()
+                val contentType = response.header("Content-Type").orEmpty().lowercase()
+                val cfRay = response.header("CF-Ray")
+                val wwwAuth = response.header("Www-Authenticate")
+                val bodyText = response.body?.string().orEmpty()
+                Log.d("DeckLotusApiClient", "POST $url (Deck $deckId, ${items.size} items) -> $code")
+
+                if (response.isSuccessful) {
+                    val parsed = json.decodeFromString(ScanCommitResponse.serializer(), bodyText)
+                    CommitDeckOutcome(
+                        committedCards = parsed.cards,
+                        totalCopies = parsed.committed,
+                        deckId = parsed.deckId ?: deckId,
+                        batchId = parsed.batchId,
+                        addedToCollectionCopies = parsed.addedToCollection?.committed ?: 0
+                    )
+                } else if (isCloudflareChallenge(code, location, contentType, cfRay, wwwAuth, bodyText)) {
+                    CommitDeckOutcome(
+                        committedCards = 0,
+                        totalCopies = 0,
+                        deckId = deckId,
+                        batchId = null,
+                        transportError = "Cloudflare Access session expired. Log in via CF Portal.",
+                        isCloudflareAuthRequired = true
+                    )
+                } else {
+                    CommitDeckOutcome(
+                        committedCards = 0,
+                        totalCopies = 0,
+                        deckId = deckId,
+                        batchId = null,
+                        transportError = "HTTP $code: ${bodyText.take(300)}"
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            val errorMsg = e.localizedMessage ?: e.javaClass.simpleName
+            Log.e("DeckLotusApiClient", "POST $url failed: $errorMsg")
+            CommitDeckOutcome(
+                committedCards = 0,
+                totalCopies = 0,
+                deckId = deckId,
+                batchId = null,
+                transportError = errorMsg
+            )
+        }
+    }
 }

@@ -86,6 +86,11 @@ data class CommitKey(
             (this.isFoil == null || this.isFoil == isFoil)
 }
 
+enum class CommitDestination(val label: String) {
+    COLLECTION("Collection"),
+    DECK("Deck")
+}
+
 data class CaptureTimings(
     val captureMs: Long = 0,
     val hashMs: Long = 0,
@@ -132,11 +137,6 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
     /**
      * Copies the session total could not account for.
-     *
-     * Shown beside the total rather than folded into it: the total is what the
-     * box is worth as far as anyone knows, and a bare figure that silently
-     * counted unpriced cards as $0 — or, as it used to, as $0.26 each — reads
-     * as more precise than it is.
      */
     val unpricedCardsCount: StateFlow<Int> = _sessionCards.map { list ->
         list.filter { it.marketPriceUsd == null }.sumOf { it.quantity }
@@ -145,6 +145,44 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
     val foilCardsCount: StateFlow<Int> = _sessionCards.map { list ->
         list.filter { it.isFoil }.sumOf { it.quantity }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    val mainboardCardsCount: StateFlow<Int> = _sessionCards.map { list ->
+        list.filter { it.boardType == "mainboard" }.sumOf { it.quantity }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    val sideboardCardsCount: StateFlow<Int> = _sessionCards.map { list ->
+        list.filter { it.boardType == "sideboard" }.sumOf { it.quantity }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    val maybeboardCardsCount: StateFlow<Int> = _sessionCards.map { list ->
+        list.filter { it.boardType == "maybeboard" }.sumOf { it.quantity }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    val commanderCardsCount: StateFlow<Int> = _sessionCards.map { list ->
+        list.filter { it.isCommander }.sumOf { it.quantity }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    // Destination & Deck Management
+    private val _commitDestination = MutableStateFlow(CommitDestination.COLLECTION)
+    val commitDestination: StateFlow<CommitDestination> = _commitDestination.asStateFlow()
+
+    private val _userDecks = MutableStateFlow<List<DeckSummary>>(emptyList())
+    val userDecks: StateFlow<List<DeckSummary>> = _userDecks.asStateFlow()
+
+    private val _selectedDeck = MutableStateFlow<DeckSummary?>(null)
+    val selectedDeck: StateFlow<DeckSummary?> = _selectedDeck.asStateFlow()
+
+    private val _isLoadingDecks = MutableStateFlow(false)
+    val isLoadingDecks: StateFlow<Boolean> = _isLoadingDecks.asStateFlow()
+
+    private val _deckErrorMessage = MutableStateFlow<String?>(null)
+    val deckErrorMessage: StateFlow<String?> = _deckErrorMessage.asStateFlow()
+
+    private val _isCheckingShortfall = MutableStateFlow(false)
+    val isCheckingShortfall: StateFlow<Boolean> = _isCheckingShortfall.asStateFlow()
+
+    private val _shortfalls = MutableStateFlow<List<OwnershipShortfall>?>(null)
+    val shortfalls: StateFlow<List<OwnershipShortfall>?> = _shortfalls.asStateFlow()
 
     val apiClient = DeckLotusApiClient()
     private val localResolver = LocalCardResolver(application)
@@ -293,6 +331,196 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
     fun selectActiveProfile(profileId: String) {
         viewModelScope.launch {
             settingsRepo.updateSettings { it.copy(activeProfileId = profileId) }
+        }
+    }
+
+    fun setCommitDestination(destination: CommitDestination) {
+        _commitDestination.value = destination
+        if (destination == CommitDestination.DECK && _userDecks.value.isEmpty()) {
+            loadUserDecks()
+        }
+    }
+
+    fun selectDeck(deck: DeckSummary) {
+        _selectedDeck.value = deck
+    }
+
+    fun loadUserDecks() {
+        val settings = settingsFlow.value
+        if (settings.baseUrl.isBlank()) return
+
+        viewModelScope.launch {
+            _isLoadingDecks.value = true
+            _deckErrorMessage.value = null
+            val result = apiClient.fetchUserDecks(settings.baseUrl, settings.effectiveToken)
+            _isLoadingDecks.value = false
+            result.fold(
+                onSuccess = { list ->
+                    _userDecks.value = list
+                    if (_selectedDeck.value == null && list.isNotEmpty()) {
+                        _selectedDeck.value = list.first()
+                    } else if (_selectedDeck.value != null) {
+                        // Refresh selected deck reference with updated count
+                        _selectedDeck.value = list.firstOrNull { it.id == _selectedDeck.value?.id } ?: list.firstOrNull()
+                    }
+                },
+                onFailure = { error ->
+                    _deckErrorMessage.value = error.localizedMessage ?: "Failed to load decks"
+                }
+            )
+        }
+    }
+
+    fun createNewDeck(
+        name: String,
+        format: String = "commander",
+        description: String? = null,
+        onCreated: (DeckSummary) -> Unit = {}
+    ) {
+        val settings = settingsFlow.value
+        if (settings.baseUrl.isBlank()) {
+            Toast.makeText(getApplication(), "Set Server URL in Settings first", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        viewModelScope.launch {
+            _isLoadingDecks.value = true
+            val result = apiClient.createDeck(settings.baseUrl, settings.effectiveToken, name, format, description)
+            _isLoadingDecks.value = false
+            result.fold(
+                onSuccess = { newDeck ->
+                    _userDecks.update { listOf(newDeck) + it }
+                    _selectedDeck.value = newDeck
+                    Toast.makeText(getApplication(), "✓ Created deck \"${newDeck.name}\"", Toast.LENGTH_SHORT).show()
+                    onCreated(newDeck)
+                },
+                onFailure = { error ->
+                    Toast.makeText(getApplication(), "Failed to create deck: ${error.localizedMessage}", Toast.LENGTH_LONG).show()
+                }
+            )
+        }
+    }
+
+    fun updateCardBoardType(id: String, boardType: String) {
+        _sessionCards.update { list ->
+            list.map { item ->
+                if (item.id == id) item.copy(boardType = boardType) else item
+            }
+        }
+    }
+
+    fun toggleCardCommander(id: String) {
+        _sessionCards.update { list ->
+            list.map { item ->
+                if (item.id == id) item.copy(isCommander = !item.isCommander) else item
+            }
+        }
+    }
+
+    fun checkShortfallForSession() {
+        val currentCards = _sessionCards.value
+        if (currentCards.isEmpty()) {
+            _shortfalls.value = emptyList()
+            return
+        }
+        val settings = settingsFlow.value
+        if (settings.baseUrl.isBlank()) return
+
+        val items = currentCards.groupBy { "${it.printingId}:${it.isFoil}" }.map { (_, group) ->
+            val first = group.first()
+            ScanShortfallItem(
+                printingId = first.printingId,
+                quantity = group.sumOf { it.quantity },
+                isFoil = first.isFoil
+            )
+        }
+
+        viewModelScope.launch {
+            _isCheckingShortfall.value = true
+            val result = apiClient.checkShortfall(settings.baseUrl, settings.effectiveToken, items)
+            _isCheckingShortfall.value = false
+            result.fold(
+                onSuccess = { _shortfalls.value = it },
+                onFailure = { _shortfalls.value = emptyList() }
+            )
+        }
+    }
+
+    fun commitBatchToDeck(deckId: Int, alsoAddToCollection: Boolean) {
+        val currentCards = _sessionCards.value
+        if (currentCards.isEmpty()) return
+
+        val settings = settingsFlow.value
+        if (settings.baseUrl.isBlank()) {
+            Toast.makeText(getApplication(), "Set Server URL in Settings first", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isCommitting = true) }
+
+            val maintenance = apiClient.maintenanceStatus(settings.baseUrl)
+            if (maintenance?.blocksWrites == true) {
+                _uiState.update { it.copy(isCommitting = false) }
+                val what = maintenance.label ?: "A card data update"
+                Toast.makeText(
+                    getApplication(),
+                    "$what is in progress — session kept, try again when it finishes",
+                    Toast.LENGTH_LONG
+                ).show()
+                return@launch
+            }
+
+            val items = currentCards.map { card ->
+                ScanCommitItem(
+                    printingId = card.printingId,
+                    quantity = card.quantity,
+                    isFoil = card.isFoil,
+                    boardType = card.boardType,
+                    isCommander = card.isCommander
+                )
+            }
+
+            val targetDeckName = _selectedDeck.value?.name ?: "Deck #$deckId"
+            val outcome = apiClient.commitBatchToDeck(
+                baseUrl = settings.baseUrl,
+                token = settings.effectiveToken,
+                deckId = deckId,
+                items = items,
+                alsoAddToCollection = alsoAddToCollection
+            )
+            _uiState.update { it.copy(isCommitting = false) }
+
+            if (outcome.isCleanSuccess) {
+                val addedToColMsg = if (outcome.addedToCollectionCopies > 0) {
+                    " (and added ${outcome.addedToCollectionCopies} missing to collection)"
+                } else ""
+                Toast.makeText(
+                    getApplication(),
+                    "✓ Added ${outcome.totalCopies} cards to \"$targetDeckName\"$addedToColMsg",
+                    Toast.LENGTH_LONG
+                ).show()
+                clearSession()
+                isSessionTrayOpen.value = false
+                loadUserDecks() // Refresh deck card counts
+                return@launch
+            }
+
+            if (outcome.isCloudflareAuthRequired) {
+                _isPortalOpen.value = true
+                Toast.makeText(
+                    getApplication(),
+                    "Cloudflare Access login required. Opening login portal...",
+                    Toast.LENGTH_LONG
+                ).show()
+                return@launch
+            }
+
+            Toast.makeText(
+                getApplication(),
+                "Failed to commit to deck: ${outcome.transportError ?: "Unknown error"}",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 

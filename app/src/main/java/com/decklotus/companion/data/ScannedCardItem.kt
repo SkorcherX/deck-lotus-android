@@ -25,6 +25,8 @@ data class ScannedCardItem(
     val priceType: String? = null,
     val thumbnail: Bitmap? = null,
     val tier: String = "confident",
+    val boardType: String = "mainboard",
+    val isCommander: Boolean = false,
     val timestamp: Long = System.currentTimeMillis()
 ) {
     /** Null rather than 0 when unpriced, so a session total can say how much

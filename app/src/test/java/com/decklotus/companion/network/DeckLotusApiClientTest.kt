@@ -1,10 +1,29 @@
 package com.decklotus.companion.network
 
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
+import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.After
+import org.junit.Assert.*
+import org.junit.Before
 import org.junit.Test
 
 class DeckLotusApiClientTest {
+
+    private lateinit var mockServer: MockWebServer
+    private lateinit var apiClient: DeckLotusApiClient
+
+    @Before
+    fun setUp() {
+        mockServer = MockWebServer()
+        mockServer.start()
+        apiClient = DeckLotusApiClient()
+    }
+
+    @After
+    fun tearDown() {
+        mockServer.shutdown()
+    }
 
     @Test
     fun testCloudflareChallengeOn302RedirectToAccessDomain() {
@@ -102,5 +121,185 @@ class DeckLotusApiClientTest {
             isCloudflareAuthRequired = true
         )
         assertFalse(cfBlockedOutcome.isCleanSuccess)
+    }
+
+    @Test
+    fun testFetchUserDecksSuccess() = runBlocking {
+        val jsonResponse = """
+            {
+              "decks": [
+                {
+                  "id": 1,
+                  "name": "Atraxa Superfriends",
+                  "format": "commander",
+                  "description": "Proliferate planeswalkers",
+                  "status": "building",
+                  "mainboard_count": 99,
+                  "sideboard_count": 0,
+                  "maybeboard_count": 5
+                },
+                {
+                  "id": 2,
+                  "name": "Burn",
+                  "format": "modern",
+                  "description": null,
+                  "status": "ready",
+                  "mainboard_count": 60,
+                  "sideboard_count": 15,
+                  "maybeboard_count": 0
+                }
+              ]
+            }
+        """.trimIndent()
+
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(jsonResponse)
+        )
+
+        val baseUrl = mockServer.url("/").toString()
+        val result = apiClient.fetchUserDecks(baseUrl, "test-token")
+
+        assertTrue(result.isSuccess)
+        val decks = result.getOrNull()
+        assertNotNull(decks)
+        assertEquals(2, decks?.size)
+        assertEquals("Atraxa Superfriends", decks?.get(0)?.name)
+        assertEquals(99, decks?.get(0)?.mainboardCount)
+        assertEquals("Commander", decks?.get(0)?.formatDisplayName)
+        assertEquals("Burn", decks?.get(1)?.name)
+        assertEquals(75, decks?.get(1)?.totalCount)
+
+        val recordedRequest = mockServer.takeRequest()
+        assertEquals("/api/decks", recordedRequest.path)
+        assertEquals("GET", recordedRequest.method)
+        assertEquals("test-token", recordedRequest.getHeader("X-API-Key"))
+    }
+
+    @Test
+    fun testCreateDeckSuccess() = runBlocking {
+        val jsonResponse = """
+            {
+              "deck": {
+                "id": 42,
+                "name": "Urza High Lord Artificer",
+                "format": "commander",
+                "description": "Artifact combo",
+                "status": "building",
+                "mainboard_count": 0,
+                "sideboard_count": 0,
+                "maybeboard_count": 0
+              }
+            }
+        """.trimIndent()
+
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(201)
+                .setHeader("Content-Type", "application/json")
+                .setBody(jsonResponse)
+        )
+
+        val baseUrl = mockServer.url("/").toString()
+        val result = apiClient.createDeck(baseUrl, "test-token", "Urza High Lord Artificer", "commander", "Artifact combo")
+
+        assertTrue(result.isSuccess)
+        val deck = result.getOrNull()
+        assertNotNull(deck)
+        assertEquals(42, deck?.id)
+        assertEquals("Urza High Lord Artificer", deck?.name)
+
+        val recordedRequest = mockServer.takeRequest()
+        assertEquals("/api/decks", recordedRequest.path)
+        assertEquals("POST", recordedRequest.method)
+        assertTrue(recordedRequest.body.readUtf8().contains("Urza High Lord Artificer"))
+    }
+
+    @Test
+    fun testCheckShortfallSuccess() = runBlocking {
+        val jsonResponse = """
+            {
+              "shortfalls": [
+                {
+                  "printingId": 1234,
+                  "isFoil": false,
+                  "needed": 2,
+                  "owned": 1,
+                  "short": 1
+                }
+              ]
+            }
+        """.trimIndent()
+
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(jsonResponse)
+        )
+
+        val baseUrl = mockServer.url("/").toString()
+        val items = listOf(ScanShortfallItem(printingId = 1234, quantity = 2, isFoil = false))
+        val result = apiClient.checkShortfall(baseUrl, "test-token", items)
+
+        assertTrue(result.isSuccess)
+        val shortfalls = result.getOrNull()
+        assertNotNull(shortfalls)
+        assertEquals(1, shortfalls?.size)
+        assertEquals(1234, shortfalls?.get(0)?.printingId)
+        assertEquals(1, shortfalls?.get(0)?.short)
+
+        val recordedRequest = mockServer.takeRequest()
+        assertEquals("/api/scan/shortfall", recordedRequest.path)
+        assertEquals("POST", recordedRequest.method)
+    }
+
+    @Test
+    fun testCommitBatchToDeckSuccess() = runBlocking {
+        val jsonResponse = """
+            {
+              "batchId": "scan-1727451234-abc",
+              "deckId": 42,
+              "cards": 3,
+              "committed": 3,
+              "addedToCollection": {
+                "batchId": "scan-1727451234-abc",
+                "cards": 1,
+                "committed": 1
+              }
+            }
+        """.trimIndent()
+
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(jsonResponse)
+        )
+
+        val baseUrl = mockServer.url("/").toString()
+        val items = listOf(
+            ScanCommitItem(printingId = 101, quantity = 1, isFoil = false, boardType = "mainboard", isCommander = true),
+            ScanCommitItem(printingId = 102, quantity = 2, isFoil = true, boardType = "sideboard", isCommander = false)
+        )
+        val outcome = apiClient.commitBatchToDeck(baseUrl, "test-token", deckId = 42, items = items, alsoAddToCollection = true)
+
+        assertTrue(outcome.isCleanSuccess)
+        assertEquals(3, outcome.committedCards)
+        assertEquals(3, outcome.totalCopies)
+        assertEquals(42, outcome.deckId)
+        assertEquals("scan-1727451234-abc", outcome.batchId)
+        assertEquals(1, outcome.addedToCollectionCopies)
+
+        val recordedRequest = mockServer.takeRequest()
+        assertEquals("/api/scan/commit", recordedRequest.path)
+        assertEquals("POST", recordedRequest.method)
+        val bodyText = recordedRequest.body.readUtf8()
+        assertTrue(bodyText.contains("\"destination\":\"deck\""))
+        assertTrue(bodyText.contains("\"deckId\":42"))
+        assertTrue(bodyText.contains("\"alsoAddToCollection\":true"))
+        assertTrue(bodyText.contains("\"isCommander\":true"))
     }
 }

@@ -12,20 +12,30 @@ import okhttp3.HttpUrl
  */
 class CloudflareCookieJar : CookieJar {
 
-    private val cookieManager: CookieManager
-        get() = CookieManager.getInstance()
+    private val cookieManager: CookieManager?
+        get() = try {
+            CookieManager.getInstance()
+        } catch (_: Throwable) {
+            null
+        }
 
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+        val cm = cookieManager ?: return
         val urlString = url.toString()
         for (cookie in cookies) {
-            cookieManager.setCookie(urlString, cookie.toString())
+            cm.setCookie(urlString, cookie.toString())
         }
-        cookieManager.flush()
+        cm.flush()
     }
 
     override fun loadForRequest(url: HttpUrl): List<Cookie> {
+        val cm = cookieManager ?: return emptyList()
         val urlString = url.toString()
-        val rawCookieHeader = cookieManager.getCookie(urlString) ?: return emptyList()
+        val rawCookieHeader = try {
+            cm.getCookie(urlString)
+        } catch (_: Throwable) {
+            null
+        } ?: return emptyList()
 
         val cookieList = mutableListOf<Cookie>()
         val pairs = rawCookieHeader.split(";")
@@ -49,12 +59,20 @@ class CloudflareCookieJar : CookieJar {
     }
 
     fun hasCloudflareAuthCookie(url: String): Boolean {
-        val cookies = cookieManager.getCookie(url) ?: return false
+        val cm = cookieManager ?: return false
+        val cookies = try {
+            cm.getCookie(url)
+        } catch (_: Throwable) {
+            null
+        } ?: return false
         return cookies.contains("CF_Authorization", ignoreCase = true)
     }
 
     fun clearCookies() {
-        cookieManager.removeAllCookies(null)
-        cookieManager.flush()
+        val cm = cookieManager ?: return
+        try {
+            cm.removeAllCookies(null)
+            cm.flush()
+        } catch (_: Throwable) {}
     }
 }

@@ -57,8 +57,20 @@ fun CaptureScreen(
     val totalCount by viewModel.totalCardsCount.collectAsState()
     val totalValueUsd by viewModel.totalSessionValueUsd.collectAsState()
     val totalFoils by viewModel.foilCardsCount.collectAsState()
+    val mainboardCount by viewModel.mainboardCardsCount.collectAsState()
+    val sideboardCount by viewModel.sideboardCardsCount.collectAsState()
+    val maybeboardCount by viewModel.maybeboardCardsCount.collectAsState()
+    val commanderCount by viewModel.commanderCardsCount.collectAsState()
     val unpricedCount by viewModel.unpricedCardsCount.collectAsState()
     val isPortalOpen by viewModel.isPortalOpen.collectAsState()
+
+    val commitDestination by viewModel.commitDestination.collectAsState()
+    val selectedDeck by viewModel.selectedDeck.collectAsState()
+    val userDecks by viewModel.userDecks.collectAsState()
+    val isLoadingDecks by viewModel.isLoadingDecks.collectAsState()
+    val deckErrorMessage by viewModel.deckErrorMessage.collectAsState()
+    val shortfalls by viewModel.shortfalls.collectAsState()
+    val isCheckingShortfall by viewModel.isCheckingShortfall.collectAsState()
 
     var showDiagnostics by remember { mutableStateOf(false) }
     var isSessionTrayOpen by remember { mutableStateOf(false) }
@@ -491,17 +503,36 @@ fun CaptureScreen(
                 totalCount = totalCount,
                 totalValueUsd = totalValueUsd,
                 totalFoils = totalFoils,
+                mainboardCount = mainboardCount,
+                sideboardCount = sideboardCount,
+                maybeboardCount = maybeboardCount,
+                commanderCount = commanderCount,
+                destination = commitDestination,
+                selectedDeck = selectedDeck,
+                userDecks = userDecks,
+                isLoadingDecks = isLoadingDecks,
+                deckErrorMessage = deckErrorMessage,
+                shortfalls = shortfalls,
+                isCheckingShortfall = isCheckingShortfall,
                 activeProfile = settings.activeProfile,
                 allProfiles = settings.userProfiles,
                 isCommitting = uiState.isCommitting,
+                onSetDestination = { viewModel.setCommitDestination(it) },
+                onSelectDeck = { viewModel.selectDeck(it) },
+                onRefreshDecks = { viewModel.loadUserDecks() },
+                onCreateNewDeck = { name, format, desc -> viewModel.createNewDeck(name, format, desc) },
                 onDismiss = { isSessionTrayOpen = false },
                 onIncrement = { viewModel.incrementQuantity(it) },
                 onDecrement = { viewModel.decrementQuantity(it) },
                 onToggleFoil = { viewModel.toggleFoil(it) },
+                onUpdateBoardType = { id, board -> viewModel.updateCardBoardType(id, board) },
+                onToggleCommander = { viewModel.toggleCardCommander(it) },
                 onRemove = { viewModel.removeCardFromSession(it) },
                 onClearAll = { viewModel.clearSession() },
                 onSelectProfile = { viewModel.selectActiveProfile(it) },
-                onCommitToCollection = { viewModel.commitBatchToCollection() }
+                onRequestCheckShortfall = { viewModel.checkShortfallForSession() },
+                onCommitToCollection = { viewModel.commitBatchToCollection() },
+                onCommitToDeck = { deckId, alsoAdd -> viewModel.commitBatchToDeck(deckId, alsoAdd) }
             )
         }
 

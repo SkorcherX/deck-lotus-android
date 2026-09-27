@@ -41,7 +41,7 @@ The server may be hosted behind a Cloudflare Tunnel secured by Cloudflare Zero T
 - Connectivity health checked against `GET /api/auth/me`.
 
 ### 3. Collection Batch Commits
-Batch scans are committed using the database-agnostic inventory bulk-add endpoint:
+Batch scans designated for collection are committed using the database-agnostic inventory bulk-add endpoint:
 `POST {baseUrl}/api/inventory/bulk-add`
 
 Request Body:
@@ -65,10 +65,42 @@ Response:
 {
   "added": 1,
   "failed": 0,
-  "errors": []
+  "errors": [],
+  "batchId": "scan-172745..."
 }
 ```
-*Note: Using `bulk-add` avoids reliance on database-specific auto-increment `printingId`s and seamlessly withstands weekly MTGJSON server database rebuilds.*
+
+### 4. Scan-to-Deck Cataloging (Zero Collection Inflation)
+When cataloging cards built into a physical deck, the app sends scans directly to the deck endpoint without inflating or duplicating inventory:
+
+#### A. Fetching & Creating Decks
+- `GET {baseUrl}/api/decks`: Lists user's existing decks with names, formats (Commander, Modern, etc.), and card counts.
+- `POST {baseUrl}/api/decks`: Creates a new deck on the fly with `{ name, format, description, status }`.
+
+#### B. Pre-commit Shortfall Verification
+- `POST {baseUrl}/api/scan/shortfall`: Queries which of the scanned cards are missing from the user's `owned_printings` collection.
+- Displays a shortfall warning if unowned copies exist, with an opt-in toggle *"Also add missing cards to my collection"*. If unchecked, collection is left untouched; if checked, only the missing shortfall copies are added to inventory.
+
+#### C. Committing to Deck
+- `POST {baseUrl}/api/scan/commit`
+```json
+{
+  "destination": "deck",
+  "deckId": 42,
+  "items": [
+    {
+      "printingId": 101,
+      "quantity": 1,
+      "isFoil": false,
+      "boardType": "mainboard",
+      "isCommander": true
+    }
+  ],
+  "alsoAddToCollection": false
+}
+```
+*Note: Committing to a deck updates `deck_cards` directly, marking collection cards as assigned to a deck without modifying `owned_printings` or duplicating card counts.*
+
 
 ## Hashing parity (do not drift)
 
