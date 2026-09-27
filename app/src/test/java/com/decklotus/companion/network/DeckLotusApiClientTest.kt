@@ -302,4 +302,68 @@ class DeckLotusApiClientTest {
         assertTrue(bodyText.contains("\"alsoAddToCollection\":true"))
         assertTrue(bodyText.contains("\"isCommander\":true"))
     }
+
+    @Test
+    fun testResolveBatchScansSuccess() = runBlocking {
+        val jsonResponse = """
+            {
+              "results": [
+                {
+                  "id": "item-1",
+                  "tier": "confident",
+                  "candidates": [
+                    {
+                      "printingId": 9999,
+                      "cardId": 123,
+                      "name": "Sol Ring",
+                      "setCode": "C18",
+                      "collectorNumber": "222"
+                    }
+                  ]
+                },
+                {
+                  "id": "item-2",
+                  "tier": "probable",
+                  "candidates": [
+                    {
+                      "printingId": 8888,
+                      "cardId": 456,
+                      "name": "Command Tower",
+                      "setCode": "CMR",
+                      "collectorNumber": "350"
+                    }
+                  ]
+                }
+              ]
+            }
+        """.trimIndent()
+
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(jsonResponse)
+        )
+
+        val baseUrl = mockServer.url("/").toString()
+        val items = listOf(
+            BatchResolveScanItem(id = "item-1", name = "Sol Ring", setCode = "C18", collectorNumber = "222"),
+            BatchResolveScanItem(id = "item-2", name = "Command Tower", setCode = "CMR", collectorNumber = "350")
+        )
+        val result = apiClient.resolveBatchScans(baseUrl, "test-token", items)
+
+        assertTrue(result.isSuccess)
+        val map = result.getOrNull()
+        assertNotNull(map)
+        assertEquals(2, map?.size)
+        assertEquals(9999, map?.get("item-1"))
+        assertEquals(8888, map?.get("item-2"))
+
+        val recordedRequest = mockServer.takeRequest()
+        assertEquals("/api/scan/resolve", recordedRequest.path)
+        assertEquals("POST", recordedRequest.method)
+        val bodyText = recordedRequest.body.readUtf8()
+        assertTrue(bodyText.contains("Sol Ring"))
+        assertTrue(bodyText.contains("Command Tower"))
+    }
 }

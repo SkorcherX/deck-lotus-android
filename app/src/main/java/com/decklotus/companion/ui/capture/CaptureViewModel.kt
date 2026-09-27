@@ -417,6 +417,42 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private suspend fun syncServerPrintingIds(baseUrl: String, token: String?): List<ScannedCardItem> {
+        val currentCards = _sessionCards.value
+        if (currentCards.isEmpty() || baseUrl.isBlank()) return currentCards
+
+        val scanItems = currentCards.map { card ->
+            BatchResolveScanItem(
+                id = card.id,
+                name = card.name,
+                setCode = card.setCode,
+                collectorNumber = card.collectorNumber
+            )
+        }
+
+        val resolveResult = apiClient.resolveBatchScans(baseUrl, token, scanItems)
+        return resolveResult.fold(
+            onSuccess = { idMap ->
+                if (idMap.isEmpty()) {
+                    currentCards
+                } else {
+                    val updated = currentCards.map { card ->
+                        val serverId = idMap[card.id]
+                        if (serverId != null && serverId != card.printingId) {
+                            card.copy(printingId = serverId)
+                        } else card
+                    }
+                    _sessionCards.value = updated
+                    updated
+                }
+            },
+            onFailure = { error ->
+                Log.w("CaptureViewModel", "Server printing ID batch resolution failed: ${error.message}, using local IDs")
+                currentCards
+            }
+        )
+    }
+
     fun checkShortfallForSession() {
         val currentCards = _sessionCards.value
         if (currentCards.isEmpty()) {
@@ -426,17 +462,19 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         val settings = settingsFlow.value
         if (settings.baseUrl.isBlank()) return
 
-        val items = currentCards.groupBy { "${it.printingId}:${it.isFoil}" }.map { (_, group) ->
-            val first = group.first()
-            ScanShortfallItem(
-                printingId = first.printingId,
-                quantity = group.sumOf { it.quantity },
-                isFoil = first.isFoil
-            )
-        }
-
         viewModelScope.launch {
             _isCheckingShortfall.value = true
+            val syncedCards = syncServerPrintingIds(settings.baseUrl, settings.effectiveToken)
+
+            val items = syncedCards.groupBy { "${it.printingId}:${it.isFoil}" }.map { (_, group) ->
+                val first = group.first()
+                ScanShortfallItem(
+                    printingId = first.printingId,
+                    quantity = group.sumOf { it.quantity },
+                    isFoil = first.isFoil
+                )
+            }
+
             val result = apiClient.checkShortfall(settings.baseUrl, settings.effectiveToken, items)
             _isCheckingShortfall.value = false
             result.fold(
@@ -471,7 +509,9 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 return@launch
             }
 
-            val items = currentCards.map { card ->
+            val syncedCards = syncServerPrintingIds(settings.baseUrl, settings.effectiveToken)
+
+            val items = syncedCards.map { card ->
                 ScanCommitItem(
                     printingId = card.printingId,
                     quantity = card.quantity,

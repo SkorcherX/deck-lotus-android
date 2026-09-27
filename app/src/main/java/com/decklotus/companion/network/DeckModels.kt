@@ -125,3 +125,50 @@ data class CommitDeckOutcome(
     val isCleanSuccess: Boolean
         get() = transportError == null && !isCloudflareAuthRequired
 }
+
+/**
+ * Item specification for batch card identity resolution via POST /api/scan/resolve.
+ */
+@Serializable
+data class BatchResolveScanItem(
+    val id: String,
+    val name: String? = null,
+    val setCode: String? = null,
+    val collectorNumber: String? = null,
+    val artHash: String? = null,
+    val frameHash: String? = null
+)
+
+@Serializable
+data class BatchResolveRequest(
+    val scans: List<BatchResolveScanItem>,
+    val limit: Int = 10
+)
+
+@Serializable
+data class BatchResolveCandidate(
+    val printingId: Int,
+    val cardId: Int? = null,
+    val uuid: String? = null,
+    val name: String? = null,
+    val setCode: String? = null,
+    val collectorNumber: String? = null,
+    val rarity: String? = null,
+    val imageUrl: String? = null,
+    val isPromo: Boolean = false,
+    val price: Double? = null,
+    val priceType: String? = null
+)
+
+@Serializable
+data class BatchResolveResultItem(
+    val id: String,
+    val tier: String = "unsure",
+    val candidates: List<BatchResolveCandidate> = emptyList()
+)
+
+@Serializable
+data class BatchResolveResponse(
+    val results: List<BatchResolveResultItem> = emptyList()
+)
+

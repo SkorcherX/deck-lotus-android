@@ -605,4 +605,71 @@ class DeckLotusApiClient(
             )
         }
     }
+
+    /**
+     * Resolve a batch of scans into live server printing IDs via POST /api/scan/resolve.
+     * Returns a map of ScanItem ID -> live server printing ID.
+     */
+    suspend fun resolveBatchScans(
+        baseUrl: String,
+        token: String?,
+        items: List<BatchResolveScanItem>
+    ): Result<Map<String, Int>> = withContext(Dispatchers.IO) {
+        val cleanBase = baseUrl.trim().trimEnd('/')
+        if (cleanBase.isBlank() || !cleanBase.startsWith("http")) {
+            return@withContext Result.failure(IllegalArgumentException("Invalid server URL"))
+        }
+        if (items.isEmpty()) {
+            return@withContext Result.success(emptyMap())
+        }
+
+        val url = "$cleanBase/api/scan/resolve"
+        val resultMap = mutableMapOf<String, Int>()
+
+        // Server limits scans array to at most 200 items per request
+        for (chunk in items.chunked(200)) {
+            val payload = BatchResolveRequest(scans = chunk, limit = 5)
+            val bodyJson = json.encodeToString(BatchResolveRequest.serializer(), payload)
+            val requestBody = bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType())
+
+            val request = Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .authenticate(token)
+                .build()
+
+            try {
+                client.newCall(request).execute().use { response ->
+                    val code = response.code
+                    val location = response.header("Location").orEmpty()
+                    val contentType = response.header("Content-Type").orEmpty().lowercase()
+                    val cfRay = response.header("CF-Ray")
+                    val wwwAuth = response.header("Www-Authenticate")
+                    val bodyText = response.body?.string().orEmpty()
+
+                    if (isCloudflareChallenge(code, location, contentType, cfRay, wwwAuth, bodyText)) {
+                        return@withContext Result.failure(IllegalStateException("Cloudflare Access session required. Log in via CF Portal."))
+                    }
+
+                    if (!response.isSuccessful) {
+                        return@withContext Result.failure(IllegalStateException("HTTP $code: ${bodyText.take(200)}"))
+                    }
+
+                    val parsed = json.decodeFromString(BatchResolveResponse.serializer(), bodyText)
+                    for (result in parsed.results) {
+                        val topCandidate = result.candidates.firstOrNull()
+                        if (topCandidate != null) {
+                            resultMap[result.id] = topCandidate.printingId
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                val errorMsg = e.localizedMessage ?: e.javaClass.simpleName
+                Log.e("DeckLotusApiClient", "POST $url failed: $errorMsg")
+                return@withContext Result.failure(e)
+            }
+        }
+
+        Result.success(resultMap)
+    }
 }
