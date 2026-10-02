@@ -1,5 +1,7 @@
 package com.decklotus.companion.network
 
+import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -11,6 +13,8 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 
 sealed class ServerConnectionStatus {
@@ -672,4 +676,344 @@ class DeckLotusApiClient(
 
         Result.success(resultMap)
     }
+
+    /**
+     * Download the latest 256-bit perceptual hash binary from GET /api/scan/hash-index.
+     */
+    suspend fun downloadHashIndex(
+        baseUrl: String,
+        token: String?,
+        targetFile: File,
+        onProgress: (Float) -> Unit = {}
+    ): Result<Int> = withContext(Dispatchers.IO) {
+        val cleanBase = baseUrl.trim().trimEnd('/')
+        if (cleanBase.isBlank() || !cleanBase.startsWith("http")) {
+            return@withContext Result.failure(IllegalArgumentException("Invalid server URL"))
+        }
+
+        val url = "$cleanBase/api/scan/hash-index"
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .authenticate(token)
+            .build()
+
+        val tmpFile = File(targetFile.parentFile ?: File("."), "${targetFile.name}.tmp")
+        try {
+            client.newCall(request).execute().use { response ->
+                val code = response.code
+                val location = response.header("Location").orEmpty()
+                val contentType = response.header("Content-Type").orEmpty().lowercase()
+                val cfRay = response.header("CF-Ray")
+                val wwwAuth = response.header("Www-Authenticate")
+
+                if (isCloudflareChallenge(code, location, contentType, cfRay, wwwAuth, "")) {
+                    return@withContext Result.failure(IllegalStateException("Cloudflare Access session required. Log in via CF Portal."))
+                }
+
+                if (!response.isSuccessful) {
+                    val bodySnippet = response.body?.string().orEmpty().take(200)
+                    return@withContext Result.failure(IllegalStateException("HTTP $code: $bodySnippet"))
+                }
+
+                val body = response.body ?: return@withContext Result.failure(IllegalStateException("Empty response body from $url"))
+                val contentLength = body.contentLength()
+                var totalRead = 0L
+
+                if (tmpFile.exists()) tmpFile.delete()
+                FileOutputStream(tmpFile).use { output ->
+                    val source = body.byteStream()
+                    val buffer = ByteArray(8192)
+                    var read: Int
+
+                    while (source.read(buffer).also { read = it } != -1) {
+                        output.write(buffer, 0, read)
+                        totalRead += read
+                        if (contentLength > 0) {
+                            onProgress((totalRead.toFloat() / contentLength.toFloat()).coerceIn(0f, 1f))
+                        }
+                    }
+                    output.flush()
+                }
+
+                // Verify file header: magic 0x444c4348
+                val headerBytes = ByteArray(16)
+                java.io.FileInputStream(tmpFile).use { stream ->
+                    val r = stream.read(headerBytes)
+                    if (r < 16) throw IllegalArgumentException("Downloaded hash file is truncated")
+                }
+                val headerBuf = java.nio.ByteBuffer.wrap(headerBytes).order(java.nio.ByteOrder.BIG_ENDIAN)
+                val magic = headerBuf.int
+                if (magic != 0x444c4348) {
+                    tmpFile.delete()
+                    return@withContext Result.failure(IllegalArgumentException("Invalid hash index magic: $magic"))
+                }
+                val version = headerBuf.short
+                val artBytes = headerBuf.get().toInt() and 0xFF
+                val frameBytes = headerBuf.get().toInt() and 0xFF
+                val count = headerBuf.int
+
+                // Atomic replace
+                if (targetFile.exists()) targetFile.delete()
+                if (!tmpFile.renameTo(targetFile)) {
+                    tmpFile.copyTo(targetFile, overwrite = true)
+                    tmpFile.delete()
+                }
+
+                Log.i("DeckLotusApiClient", "✓ Downloaded hash index: $count card hashes ($totalRead bytes)")
+                Result.success(count)
+            }
+        } catch (e: Exception) {
+            if (tmpFile.exists()) tmpFile.delete()
+            val msg = e.localizedMessage ?: e.javaClass.simpleName
+            Log.e("DeckLotusApiClient", "Failed to download hash index: $msg")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Fetch identity payload from GET /api/scan/identity.
+     */
+    suspend fun fetchIdentityPayload(
+        baseUrl: String,
+        token: String?
+    ): Result<ScanIdentityPayload> = withContext(Dispatchers.IO) {
+        val cleanBase = baseUrl.trim().trimEnd('/')
+        if (cleanBase.isBlank() || !cleanBase.startsWith("http")) {
+            return@withContext Result.failure(IllegalArgumentException("Invalid server URL"))
+        }
+
+        val url = "$cleanBase/api/scan/identity"
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .authenticate(token)
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                val code = response.code
+                val location = response.header("Location").orEmpty()
+                val contentType = response.header("Content-Type").orEmpty().lowercase()
+                val cfRay = response.header("CF-Ray")
+                val wwwAuth = response.header("Www-Authenticate")
+
+                if (isCloudflareChallenge(code, location, contentType, cfRay, wwwAuth, "")) {
+                    return@withContext Result.failure(IllegalStateException("Cloudflare Access session required. Log in via CF Portal."))
+                }
+
+                if (!response.isSuccessful) {
+                    val bodySnippet = response.body?.string().orEmpty().take(200)
+                    return@withContext Result.failure(IllegalStateException("HTTP $code: $bodySnippet"))
+                }
+
+                val bodyText = response.body?.string().orEmpty()
+                if (bodyText.isBlank()) {
+                    return@withContext Result.failure(IllegalStateException("Empty identity payload from $url"))
+                }
+
+                val payload = json.decodeFromString(ScanIdentityPayload.serializer(), bodyText)
+                if (payload.count <= 0) {
+                    return@withContext Result.failure(IllegalStateException("Identity payload contained 0 cards"))
+                }
+                Result.success(payload)
+            }
+        } catch (e: Exception) {
+            val msg = e.localizedMessage ?: e.javaClass.simpleName
+            Log.e("DeckLotusApiClient", "Failed to fetch identity payload: $msg")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Download and rebuild local SQLite card identity database from GET /api/scan/identity.
+     */
+    suspend fun syncIdentityDatabase(
+        baseUrl: String,
+        token: String?,
+        targetDbFile: File,
+        onProgress: (Float) -> Unit = {}
+    ): Result<Int> = withContext(Dispatchers.IO) {
+        onProgress(0.05f)
+        val payloadResult = fetchIdentityPayload(baseUrl, token)
+        if (payloadResult.isFailure) {
+            return@withContext Result.failure(payloadResult.exceptionOrNull() ?: Exception("Failed to fetch identity payload"))
+        }
+
+        val payload = payloadResult.getOrThrow()
+        val count = payload.count
+        onProgress(0.3f)
+
+        val tmpDbFile = File(targetDbFile.parentFile ?: File("."), "${targetDbFile.name}.tmp")
+        try {
+            // Build SQLite database
+            if (tmpDbFile.exists()) tmpDbFile.delete()
+            val db = SQLiteDatabase.openOrCreateDatabase(tmpDbFile, null)
+            try {
+                    db.execSQL("PRAGMA synchronous = OFF;")
+                    db.execSQL("PRAGMA journal_mode = MEMORY;")
+                    db.execSQL(
+                        """
+                        CREATE TABLE printings (
+                            row_id INTEGER PRIMARY KEY,
+                            printing_id INTEGER,
+                            name TEXT,
+                            set_code TEXT,
+                            collector_number TEXT,
+                            price_cents INTEGER,
+                            price_type TEXT
+                        );
+                        """.trimIndent()
+                    )
+
+                    val stmt = db.compileStatement(
+                        "INSERT INTO printings (row_id, printing_id, name, set_code, collector_number, price_cents, price_type) VALUES (?, ?, ?, ?, ?, ?, ?)"
+                    )
+
+                    val foilSet = payload.foilPriced.toHashSet()
+
+                    db.beginTransaction()
+                    try {
+                        for (row in 0 until count) {
+                            val printingId = payload.printingIds.getOrNull(row) ?: 0
+                            val name = payload.names.getOrNull(row)
+                            val setCode = payload.sets.getOrNull(row)
+                            val collectorNumber = payload.collectors.getOrNull(row)
+                            val priceCents = payload.prices.getOrNull(row)
+                            val isFoilPriced = foilSet.contains(row)
+                            val priceType = if (isFoilPriced) "foil" else if (priceCents != null) "normal" else null
+
+                            stmt.clearBindings()
+                            stmt.bindLong(1, row.toLong())
+                            stmt.bindLong(2, printingId.toLong())
+                            if (name != null) stmt.bindString(3, name) else stmt.bindNull(3)
+                            if (setCode != null) stmt.bindString(4, setCode) else stmt.bindNull(4)
+                            if (collectorNumber != null) stmt.bindString(5, collectorNumber) else stmt.bindNull(5)
+                            if (priceCents != null) stmt.bindLong(6, priceCents.toLong()) else stmt.bindNull(6)
+                            if (priceType != null) stmt.bindString(7, priceType) else stmt.bindNull(7)
+
+                            stmt.executeInsert()
+
+                            if (row % 10000 == 0) {
+                                val prog = 0.3f + 0.5f * (row.toFloat() / count.toFloat())
+                                onProgress(prog)
+                            }
+                        }
+                        db.setTransactionSuccessful()
+                    } finally {
+                        db.endTransaction()
+                    }
+
+                    onProgress(0.85f)
+                    db.execSQL("CREATE INDEX idx_name ON printings(name);")
+                    db.execSQL("CREATE INDEX idx_set_collector ON printings(set_code, collector_number);")
+                    onProgress(0.95f)
+                } finally {
+                    db.close()
+                }
+
+                // Atomic replace
+                if (targetDbFile.exists()) targetDbFile.delete()
+                if (!tmpDbFile.renameTo(targetDbFile)) {
+                    tmpDbFile.copyTo(targetDbFile, overwrite = true)
+                    tmpDbFile.delete()
+                }
+
+                onProgress(1.0f)
+                Log.i("DeckLotusApiClient", "✓ Built local SQLite card database: $count printings indexed")
+                Result.success(count)
+        } catch (e: Exception) {
+            if (tmpDbFile.exists()) tmpDbFile.delete()
+            val msg = e.localizedMessage ?: e.javaClass.simpleName
+            Log.e("DeckLotusApiClient", "Failed to sync identity database: $msg")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Complete full sync of both card hashes binary and card identities SQLite database.
+     */
+    suspend fun syncCardResources(
+        baseUrl: String,
+        token: String?,
+        context: Context,
+        onProgress: (step: String, progress: Float) -> Unit = { _, _ -> }
+    ): Result<SyncSummary> = withContext(Dispatchers.IO) {
+        val cleanBase = baseUrl.trim().trimEnd('/')
+        if (cleanBase.isBlank() || !cleanBase.startsWith("http")) {
+            return@withContext Result.failure(IllegalArgumentException("Set a valid Server Base URL first"))
+        }
+
+        // 1. Check server maintenance
+        val maintenance = maintenanceStatus(cleanBase)
+        if (maintenance?.blocksWrites == true) {
+            val what = maintenance.label ?: "A card database update"
+            return@withContext Result.failure(IllegalStateException("$what is currently running on the server. Please retry once server maintenance finishes."))
+        }
+
+        // 2. Download card-hashes.bin
+        onProgress("Downloading art hash index...", 0.05f)
+        val hashFile = File(context.filesDir, "card-hashes.bin")
+        val hashResult = downloadHashIndex(cleanBase, token, hashFile) { p ->
+            onProgress("Downloading art hash index (${(p * 100).toInt()}%)...", p * 0.4f)
+        }
+
+        if (hashResult.isFailure) {
+            return@withContext Result.failure(hashResult.exceptionOrNull() ?: Exception("Failed to download hash index"))
+        }
+        val hashesCount = hashResult.getOrThrow()
+
+        // 3. Download & Build card-identities.db
+        onProgress("Downloading card identities...", 0.45f)
+        val dbFile = File(context.filesDir, "card-identities.db")
+        val dbResult = syncIdentityDatabase(cleanBase, token, dbFile) { p ->
+            val stepLabel = if (p < 0.3f) "Downloading identities..." else if (p < 0.85f) "Indexing card database..." else "Finalizing indexes..."
+            onProgress(stepLabel, 0.4f + p * 0.6f)
+        }
+
+        if (dbResult.isFailure) {
+            return@withContext Result.failure(dbResult.exceptionOrNull() ?: Exception("Failed to sync identity database"))
+        }
+        val printingsCount = dbResult.getOrThrow()
+
+        // 4. Save metadata in SharedPreferences
+        val prefs = context.getSharedPreferences("card_db_prefs", Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        prefs.edit()
+            .putLong("last_sync_timestamp", now)
+            .putInt("synced_card_count", printingsCount)
+            .putInt("installed_version", 4)
+            .apply()
+
+        val totalBytes = (if (hashFile.exists()) hashFile.length() else 0L) + (if (dbFile.exists()) dbFile.length() else 0L)
+        Log.i("DeckLotusApiClient", "✓ Resource sync completed: $hashesCount hashes, $printingsCount printings, ${totalBytes / 1024} KB total")
+
+        Result.success(
+            SyncSummary(
+                hashesCount = hashesCount,
+                printingsCount = printingsCount,
+                totalBytes = totalBytes
+            )
+        )
+    }
 }
+
+@Serializable
+data class ScanIdentityPayload(
+    val version: Int = 2,
+    val count: Int = 0,
+    val printingIds: List<Int?> = emptyList(),
+    val cardIds: List<Int?> = emptyList(),
+    val names: List<String?> = emptyList(),
+    val sets: List<String?> = emptyList(),
+    val collectors: List<String?> = emptyList(),
+    val promos: List<Int> = emptyList(),
+    val prices: List<Int?> = emptyList(),
+    val foilPriced: List<Int> = emptyList()
+)
+
+data class SyncSummary(
+    val hashesCount: Int,
+    val printingsCount: Int,
+    val totalBytes: Long
+)

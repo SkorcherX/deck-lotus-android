@@ -79,6 +79,13 @@ private fun android.database.Cursor.readIdentities(): List<CardIdentity> {
     return list
 }
 
+data class DatabaseStats(
+    val totalPrintings: Int = 0,
+    val totalSets: Int = 0,
+    val lastSyncTimestamp: Long = 0L,
+    val fileSizeBytes: Long = 0L
+)
+
 class CardDatabaseHelper(private val context: Context) {
 
     private var db: SQLiteDatabase? = null
@@ -106,6 +113,46 @@ class CardDatabaseHelper(private val context: Context) {
         }
 
         db = SQLiteDatabase.openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+    }
+
+    suspend fun reload() = withContext(Dispatchers.IO) {
+        close()
+        val dbFile = File(context.filesDir, "card-identities.db")
+        if (dbFile.exists()) {
+            db = SQLiteDatabase.openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+            Log.d("CardDatabaseHelper", "Reloaded card-identities.db from ${dbFile.absolutePath}")
+        }
+    }
+
+    suspend fun getStats(): DatabaseStats = withContext(Dispatchers.IO) {
+        if (db == null || !db!!.isOpen) {
+            openDatabase()
+        }
+        val database = db ?: return@withContext DatabaseStats()
+        val dbFile = File(context.filesDir, "card-identities.db")
+        val prefs = context.getSharedPreferences("card_db_prefs", Context.MODE_PRIVATE)
+        val lastSync = prefs.getLong("last_sync_timestamp", 0L)
+
+        var totalPrintings = 0
+        var totalSets = 0
+
+        try {
+            database.rawQuery("SELECT count(*), count(distinct set_code) FROM printings", null).use { cursor ->
+                if (cursor.moveToFirst()) {
+                    totalPrintings = cursor.getInt(0)
+                    totalSets = cursor.getInt(1)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("CardDatabaseHelper", "Failed to query database stats: ${e.message}")
+        }
+
+        DatabaseStats(
+            totalPrintings = totalPrintings,
+            totalSets = totalSets,
+            lastSyncTimestamp = lastSync,
+            fileSizeBytes = if (dbFile.exists()) dbFile.length() else 0L
+        )
     }
 
     private fun normalizeName(raw: String): String =

@@ -99,8 +99,12 @@ When cataloging cards built into a physical deck, the app sends scans directly t
   "alsoAddToCollection": false
 }
 ```
-*Note: Committing to a deck updates `deck_cards` directly, marking collection cards as assigned to a deck without modifying `owned_printings` or duplicating card counts.*
-
+### 5. On-Device MTG Database & Hash Synchronization
+To support day-one releases of new MTG sets and fresh reprint pricing without requiring app APK updates:
+- **Server Hash Stream (`GET /api/scan/hash-index`)**: Downloads the updated 256-bit perceptual hash binary to `filesDir/card-hashes.bin`. `CardHashMatcher` loads from internal storage if present, falling back to bundled APK assets.
+- **Server Identity Payload (`GET /api/scan/identity`)**: Fetches the structured column array payload and builds a high-performance indexed SQLite database at `filesDir/card-identities.db` inside a single transaction.
+- **In-Memory Hot Reload (`LocalCardResolver.reload()`)**: Instantly reloads the new hashes and SQLite connection in memory when sync completes.
+- **Maintenance Awareness**: Automatically probes `GET /api/system/maintenance` before syncing to prevent downloading during server-side MTGJSON rebuilds.
 
 ## Hashing parity (do not drift)
 

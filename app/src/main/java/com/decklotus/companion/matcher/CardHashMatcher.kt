@@ -27,15 +27,32 @@ class CardHashMatcher {
     val isLoaded: Boolean
         get() = rowCount > 0
 
+    fun getLoadedCount(): Int = rowCount
+
     suspend fun loadFromAssets(context: Context, assetName: String = "card-hashes.bin") = withContext(Dispatchers.IO) {
         if (isLoaded) return@withContext
 
         val start = System.currentTimeMillis()
-        context.assets.open(assetName).use { stream ->
-            loadFromStream(stream)
+        val customFile = java.io.File(context.filesDir, assetName)
+        if (customFile.exists() && customFile.length() > 0) {
+            Log.d("CardHashMatcher", "Loading hashes from internal storage: ${customFile.absolutePath} (${customFile.length()} bytes)")
+            java.io.FileInputStream(customFile).use { stream ->
+                loadFromStream(stream)
+            }
+        } else {
+            Log.d("CardHashMatcher", "Loading hashes from APK assets: $assetName")
+            context.assets.open(assetName).use { stream ->
+                loadFromStream(stream)
+            }
         }
         val elapsed = System.currentTimeMillis() - start
         Log.d("CardHashMatcher", "Loaded $rowCount card hashes in ${elapsed}ms")
+    }
+
+    suspend fun reload(context: Context, assetName: String = "card-hashes.bin") = withContext(Dispatchers.IO) {
+        rowCount = 0
+        hashes = IntArray(0)
+        loadFromAssets(context, assetName)
     }
 
     fun loadFromStream(stream: InputStream) {

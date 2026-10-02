@@ -29,6 +29,13 @@ class LocalCardResolver(private val context: Context) {
         Log.d("LocalCardResolver", "On-device matching engine initialized and ready for offline resolution.")
     }
 
+    suspend fun reload() = withContext(Dispatchers.IO) {
+        hashMatcher.reload(context)
+        dbHelper.reload()
+        isReady = true
+        Log.d("LocalCardResolver", "On-device matching engine reloaded successfully.")
+    }
+
     suspend fun resolve(
         artHashHex: String,
         frameHashHex: String?,

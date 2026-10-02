@@ -36,6 +36,8 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsState()
     val connStatus by viewModel.connectionStatus.collectAsState()
     val isPortalOpen by viewModel.isPortalOpen.collectAsState()
+    val dbStats by viewModel.dbStats.collectAsState()
+    val syncStatus by viewModel.syncStatus.collectAsState()
 
     var profileToEdit by remember { mutableStateOf<UserProfile?>(null) }
     var isAddProfileOpen by remember { mutableStateOf(false) }
@@ -423,7 +425,172 @@ fun SettingsScreen(
                 }
             }
 
-            // Section 4: Manual Camera2 Settings (Pixel 10 Pro Rig)
+            // Section 4: Card Database & Art Hash Sync
+            Text(
+                text = "MTG DATABASE & HASH SYNC",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = LotusCyan,
+                fontFamily = FontFamily.Monospace
+            )
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text(
+                        text = "Sync on-device MTG database and 256-bit perceptual art hashes from your server when new MTG sets or reprint prices are released.",
+                        fontSize = 12.sp,
+                        color = TextSecondary
+                    )
+
+                    // Database Stats Card
+                    Surface(
+                        color = Color(0xFF13171D),
+                        shape = RoundedCornerShape(8.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, SurfaceBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Active Database Index",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = TextPrimary
+                                )
+                                Surface(
+                                    color = LotusCyan.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(4.dp)
+                                ) {
+                                    Text(
+                                        text = "${java.text.NumberFormat.getNumberInstance().format(dbStats.totalPrintings)} Cards",
+                                        color = LotusCyan,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+
+                            Text(
+                                text = "${dbStats.totalSets} MTG set codes indexed",
+                                fontSize = 12.sp,
+                                color = TextSecondary
+                            )
+
+                            val lastSyncStr = if (dbStats.lastSyncTimestamp > 0L) {
+                                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+                                "Last synced: ${sdf.format(java.util.Date(dbStats.lastSyncTimestamp))}"
+                            } else {
+                                "Source: Bundled APK Assets (v4)"
+                            }
+
+                            Text(
+                                text = lastSyncStr,
+                                fontSize = 11.sp,
+                                color = TextSecondary,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+
+                    // Sync Status Indicator
+                    when (val s = syncStatus) {
+                        is DatabaseSyncStatus.Syncing -> {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = s.step,
+                                        fontSize = 12.sp,
+                                        color = LotusCyan,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = "${(s.progress * 100).toInt()}%",
+                                        fontSize = 12.sp,
+                                        color = LotusCyan,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                                LinearProgressIndicator(
+                                    progress = { s.progress },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = LotusCyan,
+                                    trackColor = SurfaceBorder
+                                )
+                            }
+                        }
+                        is DatabaseSyncStatus.Success -> {
+                            Surface(
+                                color = TierConfident.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = TierConfident, modifier = Modifier.size(18.dp))
+                                    Text(s.message, color = TierConfident, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+                        }
+                        is DatabaseSyncStatus.Error -> {
+                            Surface(
+                                color = TierConflict.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.Warning, contentDescription = null, tint = TierConflict, modifier = Modifier.size(18.dp))
+                                    Text(s.message, color = TierConflict, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+                        }
+                        is DatabaseSyncStatus.Idle -> {}
+                    }
+
+                    // Sync Button
+                    val isSyncing = syncStatus is DatabaseSyncStatus.Syncing
+                    Button(
+                        onClick = { viewModel.syncCardDatabase() },
+                        enabled = !isSyncing && baseUrl.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = LotusPurple,
+                            disabledContainerColor = SurfaceBorder
+                        )
+                    ) {
+                        Icon(
+                            if (isSyncing) Icons.Default.Refresh else Icons.Default.CloudDownload,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isSyncing) "Syncing Resources..." else "Sync Database & Hashes",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            // Section 5: Manual Camera2 Settings (Pixel 10 Pro Rig)
             Text(
                 text = "MANUAL CAMERA2 SENSOR LOCKS",
                 fontSize = 12.sp,

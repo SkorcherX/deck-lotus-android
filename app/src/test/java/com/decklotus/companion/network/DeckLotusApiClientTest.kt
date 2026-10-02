@@ -366,4 +366,88 @@ class DeckLotusApiClientTest {
         assertTrue(bodyText.contains("Sol Ring"))
         assertTrue(bodyText.contains("Command Tower"))
     }
+
+    @Test
+    fun testDownloadHashIndexSuccess() = runBlocking {
+        // Construct valid 16-byte binary header: magic 0x444c4348, version 1, art 32, frame 8, count 1
+        val headerBytes = ByteArray(16)
+        val buf = java.nio.ByteBuffer.wrap(headerBytes).order(java.nio.ByteOrder.BIG_ENDIAN)
+        buf.putInt(0x444c4348)
+        buf.putShort(1.toShort())
+        buf.put(32.toByte())
+        buf.put(8.toByte())
+        buf.putInt(1) // 1 row
+
+        // 1 row: 16 bytes UUID + 32 bytes Art Hash + 8 bytes Frame Hash = 56 bytes
+        val rowBytes = ByteArray(56)
+        val totalPayload = headerBytes + rowBytes
+
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/octet-stream")
+                .setBody(okio.Buffer().write(totalPayload))
+        )
+
+        val baseUrl = mockServer.url("/").toString()
+        val tempFile = java.io.File.createTempFile("test-hashes", ".bin")
+        tempFile.deleteOnExit()
+
+        var progressReported = 0f
+        val result = apiClient.downloadHashIndex(baseUrl, "test-token", tempFile) { p ->
+            progressReported = p
+        }
+
+        assertTrue(result.isSuccess)
+        assertEquals(1, result.getOrNull())
+        assertTrue(tempFile.exists())
+        assertEquals(72, tempFile.length()) // 16 + 56 = 72
+
+        val recordedRequest = mockServer.takeRequest()
+        assertEquals("/api/scan/hash-index", recordedRequest.path)
+        assertEquals("GET", recordedRequest.method)
+    }
+
+    @Test
+    fun testFetchIdentityPayloadSuccess() = runBlocking {
+        val identityJson = """
+            {
+              "version": 2,
+              "count": 2,
+              "printingIds": [101, 102],
+              "cardIds": [1, 2],
+              "names": ["Lightning Bolt", "Counterspell"],
+              "sets": ["FRA", "FRA"],
+              "collectors": ["1", "2"],
+              "promos": [],
+              "prices": [199, 250],
+              "foilPriced": []
+            }
+        """.trimIndent()
+
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(identityJson)
+        )
+
+        val baseUrl = mockServer.url("/").toString()
+        val result = apiClient.fetchIdentityPayload(baseUrl, "test-token")
+
+        assertTrue(result.isSuccess)
+        val payload = result.getOrNull()
+        assertNotNull(payload)
+        assertEquals(2, payload?.count)
+        assertEquals(2, payload?.version)
+        assertEquals(listOf(101, 102), payload?.printingIds)
+        assertEquals(listOf("Lightning Bolt", "Counterspell"), payload?.names)
+        assertEquals(listOf("FRA", "FRA"), payload?.sets)
+        assertEquals(listOf("1", "2"), payload?.collectors)
+        assertEquals(listOf(199, 250), payload?.prices)
+
+        val recordedRequest = mockServer.takeRequest()
+        assertEquals("/api/scan/identity", recordedRequest.path)
+        assertEquals("GET", recordedRequest.method)
+    }
 }

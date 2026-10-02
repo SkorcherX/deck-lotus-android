@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.decklotus.companion.data.AppSettings
 import com.decklotus.companion.data.SettingsRepository
 import com.decklotus.companion.data.UserProfile
+import com.decklotus.companion.matcher.CardDatabaseHelper
+import com.decklotus.companion.matcher.DatabaseStats
 import com.decklotus.companion.network.DeckLotusApiClient
 import com.decklotus.companion.network.ServerConnectionStatus
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,9 +17,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+sealed class DatabaseSyncStatus {
+    object Idle : DatabaseSyncStatus()
+    data class Syncing(val step: String, val progress: Float) : DatabaseSyncStatus()
+    data class Success(val message: String, val timestamp: Long) : DatabaseSyncStatus()
+    data class Error(val message: String) : DatabaseSyncStatus()
+}
+
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = SettingsRepository(application)
     val apiClient = DeckLotusApiClient()
+    private val dbHelper = CardDatabaseHelper(application)
 
     val settings: StateFlow<AppSettings> = repository.settingsFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
@@ -27,6 +37,57 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     private val _isPortalOpen = MutableStateFlow(false)
     val isPortalOpen: StateFlow<Boolean> = _isPortalOpen.asStateFlow()
+
+    private val _dbStats = MutableStateFlow(DatabaseStats())
+    val dbStats: StateFlow<DatabaseStats> = _dbStats.asStateFlow()
+
+    private val _syncStatus = MutableStateFlow<DatabaseSyncStatus>(DatabaseSyncStatus.Idle)
+    val syncStatus: StateFlow<DatabaseSyncStatus> = _syncStatus.asStateFlow()
+
+    init {
+        loadDatabaseStats()
+    }
+
+    fun loadDatabaseStats() {
+        viewModelScope.launch {
+            val stats = dbHelper.getStats()
+            _dbStats.value = stats
+        }
+    }
+
+    fun syncCardDatabase() {
+        val current = settings.value
+        if (current.baseUrl.isBlank()) {
+            _syncStatus.value = DatabaseSyncStatus.Error("Set Server Base URL first")
+            return
+        }
+
+        viewModelScope.launch {
+            _syncStatus.value = DatabaseSyncStatus.Syncing("Connecting to server...", 0.02f)
+            val result = apiClient.syncCardResources(
+                baseUrl = current.baseUrl,
+                token = current.effectiveToken,
+                context = getApplication()
+            ) { step, progress ->
+                _syncStatus.value = DatabaseSyncStatus.Syncing(step, progress)
+            }
+
+            result.fold(
+                onSuccess = { summary ->
+                    dbHelper.reload()
+                    val updatedStats = dbHelper.getStats()
+                    _dbStats.value = updatedStats
+                    _syncStatus.value = DatabaseSyncStatus.Success(
+                        "✓ Synced ${summary.printingsCount} card printings & ${summary.hashesCount} art hashes (${summary.totalBytes / 1024} KB)",
+                        System.currentTimeMillis()
+                    )
+                },
+                onFailure = { error ->
+                    _syncStatus.value = DatabaseSyncStatus.Error(error.localizedMessage ?: "Sync failed")
+                }
+            )
+        }
+    }
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) {
         viewModelScope.launch {
