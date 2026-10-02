@@ -230,6 +230,12 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun reloadResolver() {
+        viewModelScope.launch(Dispatchers.IO) {
+            localResolver.reload()
+        }
+    }
+
     fun startAutoScanLoop(cameraController: CameraController, previewView: PreviewView) {
         autoScanJob?.cancel()
         autoScanJob = viewModelScope.launch(Dispatchers.Default) {

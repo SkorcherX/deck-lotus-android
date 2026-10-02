@@ -47,7 +47,10 @@ class MainActivity : ComponentActivity() {
                             )
                             Screen.SETTINGS -> SettingsScreen(
                                 viewModel = settingsViewModel,
-                                onNavigateBack = { currentScreen = Screen.CAPTURE }
+                                onNavigateBack = {
+                                    captureViewModel.reloadResolver()
+                                    currentScreen = Screen.CAPTURE
+                                }
                             )
                         }
                     }

@@ -850,11 +850,15 @@ class DeckLotusApiClient(
             if (tmpDbFile.exists()) tmpDbFile.delete()
             val db = SQLiteDatabase.openOrCreateDatabase(tmpDbFile, null)
             try {
-                    db.execSQL("PRAGMA synchronous = OFF;")
-                    db.execSQL("PRAGMA journal_mode = MEMORY;")
-                    db.execSQL(
-                        """
-                        CREATE TABLE printings (
+                try {
+                    db.rawQuery("PRAGMA synchronous = OFF", null)?.use { it.moveToFirst() }
+                    db.rawQuery("PRAGMA journal_mode = MEMORY", null)?.use { it.moveToFirst() }
+                } catch (_: Exception) {
+                    // Non-critical performance optimizations
+                }
+                db.execSQL(
+                    """
+                    CREATE TABLE printings (
                             row_id INTEGER PRIMARY KEY,
                             printing_id INTEGER,
                             name TEXT,
