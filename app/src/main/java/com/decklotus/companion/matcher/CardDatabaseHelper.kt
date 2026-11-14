@@ -89,9 +89,9 @@ data class DatabaseStats(
 class CardDatabaseHelper(private val context: Context) {
 
     private var db: SQLiteDatabase? = null
-    // 4 adds price_type and makes price_cents nullable. A bump re-extracts
-    // the asset, which is the only way an installed app picks up a new schema.
-    private val DB_VERSION = 4
+    // 5 bundles the full Star Trek (TRK/TRC/SDS) sets and clears any stale OTA
+    // card-hashes.bin so the updated APK assets take precedence.
+    private val DB_VERSION = 5
 
     suspend fun openDatabase() = withContext(Dispatchers.IO) {
         if (db != null && db!!.isOpen) return@withContext
@@ -103,6 +103,11 @@ class CardDatabaseHelper(private val context: Context) {
         if (!dbFile.exists() || installedVersion < DB_VERSION) {
             Log.d("CardDatabaseHelper", "Extracting fresh card-identities.db v$DB_VERSION from assets...")
             if (dbFile.exists()) dbFile.delete()
+            val customHashFile = File(context.filesDir, "card-hashes.bin")
+            if (customHashFile.exists()) {
+                customHashFile.delete()
+                Log.d("CardDatabaseHelper", "Cleared stale internal card-hashes.bin to use bundled v$DB_VERSION asset")
+            }
             context.assets.open("card-identities.db").use { input ->
                 FileOutputStream(dbFile).use { output ->
                     input.copyTo(output)

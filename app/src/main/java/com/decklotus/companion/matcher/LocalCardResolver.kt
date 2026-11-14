@@ -23,15 +23,15 @@ class LocalCardResolver(private val context: Context) {
 
     suspend fun initialize() = withContext(Dispatchers.IO) {
         if (isReady) return@withContext
-        hashMatcher.loadFromAssets(context)
         dbHelper.openDatabase()
+        hashMatcher.loadFromAssets(context)
         isReady = true
         Log.d("LocalCardResolver", "On-device matching engine initialized and ready for offline resolution.")
     }
 
     suspend fun reload() = withContext(Dispatchers.IO) {
-        hashMatcher.reload(context)
         dbHelper.reload()
+        hashMatcher.reload(context)
         isReady = true
         Log.d("LocalCardResolver", "On-device matching engine reloaded successfully.")
     }

@@ -986,7 +986,7 @@ class DeckLotusApiClient(
         prefs.edit()
             .putLong("last_sync_timestamp", now)
             .putInt("synced_card_count", printingsCount)
-            .putInt("installed_version", 4)
+            .putInt("installed_version", 5)
             .apply()
 
         val totalBytes = (if (hashFile.exists()) hashFile.length() else 0L) + (if (dbFile.exists()) dbFile.length() else 0L)
